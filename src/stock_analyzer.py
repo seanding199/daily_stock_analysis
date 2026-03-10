@@ -691,29 +691,32 @@ class StockTrendAnalyzer:
         """
         生成买入信号
 
-        综合评分系统：
-        - 趋势（30分）：多头排列得分高
-        - 乖离率（20分）：接近 MA5 得分高
-        - 量能（15分）：缩量回调得分高
-        - 支撑（10分）：获得均线支撑得分高
-        - MACD（15分）：金叉和多头得分高
-        - RSI（10分）：超卖和强势得分高
+        综合评分系统（满分100分）：
+        - 趋势（20分）：均线多头排列
+        - 买点（15分）：乖离率 + 均线支撑联合判断
+        - 量能（10分）：量价配合
+        - MACD（15分）：趋势动量确认
+        - RSI（8分）：超买超卖过滤
+        - BOLL（10分）：波动通道位置
+        - KDJ（12分）：短线买卖时机
+        - ATR（10分）：波动率风控
         """
         score = 0
         reasons = []
         risks = []
 
-        # === 趋势评分（30分）===
+        # === 1. 趋势评分（20分）===
+        # 趋势是基础，但不应一票否决，降低权重让其他指标共同决策
         trend_scores = {
-            TrendStatus.STRONG_BULL: 30,
-            TrendStatus.BULL: 26,
-            TrendStatus.WEAK_BULL: 18,
-            TrendStatus.CONSOLIDATION: 12,
-            TrendStatus.WEAK_BEAR: 8,
-            TrendStatus.BEAR: 4,
+            TrendStatus.STRONG_BULL: 20,
+            TrendStatus.BULL: 17,
+            TrendStatus.WEAK_BULL: 12,
+            TrendStatus.CONSOLIDATION: 8,
+            TrendStatus.WEAK_BEAR: 5,
+            TrendStatus.BEAR: 2,
             TrendStatus.STRONG_BEAR: 0,
         }
-        trend_score = trend_scores.get(result.trend_status, 12)
+        trend_score = trend_scores.get(result.trend_status, 8)
         score += trend_score
 
         if result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]:
@@ -721,62 +724,68 @@ class StockTrendAnalyzer:
         elif result.trend_status in [TrendStatus.BEAR, TrendStatus.STRONG_BEAR]:
             risks.append(f"⚠️ {result.trend_status.value}，不宜做多")
 
-        # === 乖离率评分（20分）===
+        # === 2. 买点评分（15分）===
+        # 合并乖离率 + 支撑位联合判断，回踩支撑才是好买点
         bias = result.bias_ma5
+        buy_point_score = 0
+
         if bias < 0:
-            # 价格在 MA5 下方（回调中）
             if bias > -3:
-                score += 20
+                buy_point_score += 10
                 reasons.append(f"✅ 价格略低于MA5({bias:.1f}%)，回踩买点")
             elif bias > -5:
-                score += 16
+                buy_point_score += 7
                 reasons.append(f"✅ 价格回踩MA5({bias:.1f}%)，观察支撑")
             else:
-                score += 8
+                buy_point_score += 2
                 risks.append(f"⚠️ 乖离率过大({bias:.1f}%)，可能破位")
         elif bias < 2:
-            score += 18
+            buy_point_score += 9
             reasons.append(f"✅ 价格贴近MA5({bias:.1f}%)，介入好时机")
         elif bias < self.BIAS_THRESHOLD:
-            score += 14
+            buy_point_score += 5
             reasons.append(f"⚡ 价格略高于MA5({bias:.1f}%)，可小仓介入")
         else:
-            score += 4
+            buy_point_score += 0
             risks.append(f"❌ 乖离率过高({bias:.1f}%>5%)，严禁追高！")
 
-        # === 量能评分（15分）===
+        # 支撑加分（买点的补充确认）
+        if result.support_ma5:
+            buy_point_score += 3
+            reasons.append("✅ MA5支撑有效")
+        if result.support_ma10:
+            buy_point_score += 2
+            reasons.append("✅ MA10支撑有效")
+
+        score += min(buy_point_score, 15)  # 上限15分
+
+        # === 3. 量能评分（10分）===
         volume_scores = {
-            VolumeStatus.SHRINK_VOLUME_DOWN: 15,  # 缩量回调最佳
-            VolumeStatus.HEAVY_VOLUME_UP: 12,     # 放量上涨次之
-            VolumeStatus.NORMAL: 10,
-            VolumeStatus.SHRINK_VOLUME_UP: 6,     # 无量上涨较差
-            VolumeStatus.HEAVY_VOLUME_DOWN: 0,    # 放量下跌最差
+            VolumeStatus.SHRINK_VOLUME_DOWN: 10,  # 缩量回调最佳
+            VolumeStatus.HEAVY_VOLUME_UP: 8,      # 放量上涨
+            VolumeStatus.NORMAL: 6,
+            VolumeStatus.SHRINK_VOLUME_UP: 3,     # 无量上涨，动能不足
+            VolumeStatus.HEAVY_VOLUME_DOWN: 0,    # 放量下跌
         }
-        vol_score = volume_scores.get(result.volume_status, 8)
+        vol_score = volume_scores.get(result.volume_status, 5)
         score += vol_score
 
         if result.volume_status == VolumeStatus.SHRINK_VOLUME_DOWN:
             reasons.append("✅ 缩量回调，主力洗盘")
+        elif result.volume_status == VolumeStatus.HEAVY_VOLUME_UP:
+            reasons.append("✅ 放量上涨，多头发力")
         elif result.volume_status == VolumeStatus.HEAVY_VOLUME_DOWN:
             risks.append("⚠️ 放量下跌，注意风险")
 
-        # === 支撑评分（10分）===
-        if result.support_ma5:
-            score += 5
-            reasons.append("✅ MA5支撑有效")
-        if result.support_ma10:
-            score += 5
-            reasons.append("✅ MA10支撑有效")
-
-        # === MACD 评分（15分）===
+        # === 4. MACD 评分（15分）===
         macd_scores = {
-            MACDStatus.GOLDEN_CROSS_ZERO: 15,  # 零轴上金叉最强
-            MACDStatus.GOLDEN_CROSS: 12,      # 金叉
-            MACDStatus.CROSSING_UP: 10,       # 上穿零轴
-            MACDStatus.BULLISH: 8,            # 多头
-            MACDStatus.BEARISH: 2,            # 空头
-            MACDStatus.CROSSING_DOWN: 0,       # 下穿零轴
-            MACDStatus.DEATH_CROSS: 0,        # 死叉
+            MACDStatus.GOLDEN_CROSS_ZERO: 15,  # 零轴上金叉
+            MACDStatus.GOLDEN_CROSS: 12,       # 金叉
+            MACDStatus.CROSSING_UP: 10,        # 上穿零轴
+            MACDStatus.BULLISH: 8,             # 多头
+            MACDStatus.BEARISH: 3,             # 空头
+            MACDStatus.CROSSING_DOWN: 1,       # 下穿零轴
+            MACDStatus.DEATH_CROSS: 0,         # 死叉
         }
         macd_score = macd_scores.get(result.macd_status, 5)
         score += macd_score
@@ -788,15 +797,15 @@ class StockTrendAnalyzer:
         else:
             reasons.append(result.macd_signal)
 
-        # === RSI 评分（10分）===
+        # === 5. RSI 评分（8分）===
         rsi_scores = {
-            RSIStatus.OVERSOLD: 10,       # 超卖最佳
-            RSIStatus.STRONG_BUY: 8,     # 强势
-            RSIStatus.NEUTRAL: 5,        # 中性
-            RSIStatus.WEAK: 3,            # 弱势
-            RSIStatus.OVERBOUGHT: 0,       # 超买最差
+            RSIStatus.OVERSOLD: 8,        # 超卖反弹机会
+            RSIStatus.STRONG_BUY: 6,      # 强势
+            RSIStatus.NEUTRAL: 4,         # 中性
+            RSIStatus.WEAK: 2,            # 弱势
+            RSIStatus.OVERBOUGHT: 0,      # 超买风险
         }
-        rsi_score = rsi_scores.get(result.rsi_status, 5)
+        rsi_score = rsi_scores.get(result.rsi_status, 4)
         score += rsi_score
 
         if result.rsi_status in [RSIStatus.OVERSOLD, RSIStatus.STRONG_BUY]:
@@ -806,19 +815,114 @@ class StockTrendAnalyzer:
         else:
             reasons.append(result.rsi_signal)
 
+        # === 6. BOLL 布林带评分（10分）===
+        if result.boll_status:
+            boll_pos = result.boll_position  # 0-100%
+            if boll_pos <= 20:
+                # 接近下轨，超卖区域，反弹机会
+                boll_score = 10
+                reasons.append(f"✅ BOLL下轨附近({boll_pos:.0f}%)，超卖反弹")
+            elif boll_pos <= 40:
+                boll_score = 8
+                reasons.append(f"✅ BOLL中下区域({boll_pos:.0f}%)，低位介入")
+            elif boll_pos <= 60:
+                boll_score = 6
+                reasons.append(f"⚡ BOLL中轨附近({boll_pos:.0f}%)，震荡区")
+            elif boll_pos <= 80:
+                boll_score = 3
+                reasons.append(f"⚠ BOLL中上区域({boll_pos:.0f}%)，注意压力")
+            else:
+                boll_score = 0
+                risks.append(f"⚠️ BOLL上轨附近({boll_pos:.0f}%)，超买风险")
+            score += boll_score
+        else:
+            score += 5  # 无数据给中性分
+
+        # === 7. KDJ 评分（12分）===
+        if result.kdj_status:
+            kdj_buy = result.kdj_buy_strength   # 0-5
+            kdj_sell = result.kdj_sell_strength  # 0-5
+
+            if kdj_buy >= 4:
+                kdj_score = 12
+                reasons.append(f"✅ KDJ强买入信号(J={result.kdj_j:.1f})")
+            elif kdj_buy >= 2:
+                kdj_score = 9
+                reasons.append(f"✅ KDJ买入信号(K={result.kdj_k:.1f},D={result.kdj_d:.1f})")
+            elif kdj_sell >= 4:
+                kdj_score = 0
+                risks.append(f"⚠️ KDJ强卖出信号(J={result.kdj_j:.1f})")
+            elif kdj_sell >= 2:
+                kdj_score = 3
+                risks.append(f"⚠️ KDJ卖出信号(K={result.kdj_k:.1f})")
+            else:
+                kdj_score = 6
+                reasons.append(f"⚡ KDJ中性(K={result.kdj_k:.1f},D={result.kdj_d:.1f})")
+            score += kdj_score
+        else:
+            score += 6  # 无数据给中性分
+
+        # === 8. ATR 风控评分（10分）===
+        if result.atr_pct > 0:
+            atr_pct = result.atr_pct
+            if atr_pct <= 2.0:
+                atr_score = 10
+                reasons.append(f"✅ 波动率低({atr_pct:.1f}%)，风险可控")
+            elif atr_pct <= 3.5:
+                atr_score = 8
+                reasons.append(f"✅ 波动率适中({atr_pct:.1f}%)，正常范围")
+            elif atr_pct <= 5.0:
+                atr_score = 5
+                reasons.append(f"⚡ 波动率偏高({atr_pct:.1f}%)，注意仓位")
+            elif atr_pct <= 7.0:
+                atr_score = 2
+                risks.append(f"⚠️ 波动率高({atr_pct:.1f}%)，轻仓操作")
+            else:
+                atr_score = 0
+                risks.append(f"❌ 波动率极高({atr_pct:.1f}%)，风险极大")
+            score += atr_score
+        else:
+            score += 5  # 无数据给中性分
+
+        # === 9. 多指标共振奖惩（±5分）===
+        bonus = 0
+
+        # 共振加分：趋势+MACD+KDJ 三多头共振
+        bullish_count = 0
+        if result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]:
+            bullish_count += 1
+        if result.macd_status in [MACDStatus.GOLDEN_CROSS_ZERO, MACDStatus.GOLDEN_CROSS, MACDStatus.BULLISH]:
+            bullish_count += 1
+        if result.kdj_status and result.kdj_buy_strength >= 2:
+            bullish_count += 1
+
+        if bullish_count == 3:
+            bonus += 5
+            reasons.append("🔥 趋势+MACD+KDJ 三重共振看多")
+        elif bullish_count == 0:
+            # 三空头共振
+            bearish_macd = result.macd_status in [MACDStatus.DEATH_CROSS, MACDStatus.CROSSING_DOWN, MACDStatus.BEARISH]
+            bearish_trend = result.trend_status in [TrendStatus.BEAR, TrendStatus.STRONG_BEAR]
+            bearish_kdj = result.kdj_status and result.kdj_sell_strength >= 2
+            if bearish_macd and bearish_trend and bearish_kdj:
+                bonus -= 5
+                risks.append("💀 趋势+MACD+KDJ 三重共振看空")
+
+        score += bonus
+
         # === 综合判断 ===
-        result.signal_score = score
+        result.signal_score = max(0, min(score, 100))  # 限制在 0-100
         result.signal_reasons = reasons
         result.risk_factors = risks
 
-        # 生成买入信号（调整阈值以适应新的100分制）
-        if score >= 75 and result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]:
+        # 生成买入信号
+        if score >= 78 and result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL]:
             result.buy_signal = BuySignal.STRONG_BUY
-        elif score >= 60 and result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL, TrendStatus.WEAK_BULL]:
+        elif score >= 65 and result.trend_status in [TrendStatus.STRONG_BULL, TrendStatus.BULL, TrendStatus.WEAK_BULL]:
             result.buy_signal = BuySignal.BUY
-        elif score >= 45:
+        elif score >= 50:
             result.buy_signal = BuySignal.HOLD
-        elif score >= 30:
+        elif score >= 35:
             result.buy_signal = BuySignal.WAIT
         elif result.trend_status in [TrendStatus.BEAR, TrendStatus.STRONG_BEAR]:
             result.buy_signal = BuySignal.STRONG_SELL
