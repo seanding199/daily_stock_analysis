@@ -203,21 +203,38 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.warning(f"[{code}] 获取筹码分布失败: {e}")
             
+            # Step 2.5: 获取所属板块
+            board_names = None
+            try:
+                board_names = self.fetcher_manager.get_belong_board(code)
+                if board_names:
+                    logger.info(f"[{code}] 所属板块: {', '.join(board_names[:5])}")
+                else:
+                    logger.debug(f"[{code}] 未获取到板块信息")
+            except Exception as e:
+                logger.warning(f"[{code}] 获取所属板块失败: {e}")
+
             # Step 3: 趋势分析（基于交易理念）
             trend_result: Optional[TrendAnalysisResult] = None
             try:
-                # 获取历史数据进行趋势分析
-                context = self.db.get_analysis_context(code)
-                if context and 'raw_data' in context:
-                    import pandas as pd
-                    raw_data = context['raw_data']
-                    if isinstance(raw_data, list) and len(raw_data) > 0:
-                        df = pd.DataFrame(raw_data)
-                        trend_result = self.trend_analyzer.analyze(df, code)
-                        logger.info(f"[{code}] 趋势分析: {trend_result.trend_status.value}, "
-                                  f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
+                # 获取历史数据进行趋势分析（使用 get_latest_data 获取最近30天数据）
+                import pandas as pd
+                stock_daily_list = self.db.get_latest_data(code, days=30)
+                if stock_daily_list and len(stock_daily_list) > 0:
+                    # 将 StockDaily 对象列表转换为 DataFrame
+                    raw_data = [item.to_dict() for item in stock_daily_list]
+                    df = pd.DataFrame(raw_data)
+                    # 确保按日期升序排列
+                    if 'date' in df.columns:
+                        df = df.sort_values('date')
+                    trend_result = self.trend_analyzer.analyze(df, code)
+                    logger.info(f"[{code}] 趋势分析: {trend_result.trend_status.value}, "
+                              f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
+                else:
+                    logger.warning(f"[{code}] 无历史数据，跳过趋势分析")
             except Exception as e:
                 logger.warning(f"[{code}] 趋势分析失败: {e}")
+                logger.exception(f"[{code}] 趋势分析详细错误:")
             
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
             news_context = None
@@ -273,13 +290,14 @@ class StockAnalysisPipeline:
                     'yesterday': {}
                 }
             
-            # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、股票名称）
+            # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、板块、股票名称）
             enhanced_context = self._enhance_context(
-                context, 
-                realtime_quote, 
-                chip_data, 
+                context,
+                realtime_quote,
+                chip_data,
                 trend_result,
-                stock_name  # 传入股票名称
+                stock_name,  # 传入股票名称
+                board_names  # 传入板块信息
             )
             
             # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
@@ -324,20 +342,22 @@ class StockAnalysisPipeline:
         realtime_quote,
         chip_data: Optional[ChipDistribution],
         trend_result: Optional[TrendAnalysisResult],
-        stock_name: str = ""
+        stock_name: str = "",
+        board_names: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         增强分析上下文
-        
-        将实时行情、筹码分布、趋势分析结果、股票名称添加到上下文中
-        
+
+        将实时行情、筹码分布、趋势分析结果、板块信息、股票名称添加到上下文中
+
         Args:
             context: 原始上下文
             realtime_quote: 实时行情数据（UnifiedRealtimeQuote 或 None）
             chip_data: 筹码分布数据
             trend_result: 趋势分析结果
             stock_name: 股票名称
-            
+            board_names: 所属板块名称列表
+
         Returns:
             增强后的上下文
         """
@@ -381,22 +401,15 @@ class StockAnalysisPipeline:
                 'chip_status': chip_data.get_chip_status(current_price or 0),
             }
         
-        # 添加趋势分析结果
+        # 添加趋势分析结果（包含所有指标，包括新增的BOLL/KDJ/ATR）
         if trend_result:
-            enhanced['trend_analysis'] = {
-                'trend_status': trend_result.trend_status.value,
-                'ma_alignment': trend_result.ma_alignment,
-                'trend_strength': trend_result.trend_strength,
-                'bias_ma5': trend_result.bias_ma5,
-                'bias_ma10': trend_result.bias_ma10,
-                'volume_status': trend_result.volume_status.value,
-                'volume_trend': trend_result.volume_trend,
-                'buy_signal': trend_result.buy_signal.value,
-                'signal_score': trend_result.signal_score,
-                'signal_reasons': trend_result.signal_reasons,
-                'risk_factors': trend_result.risk_factors,
-            }
-        
+            # 使用 to_dict() 获取完整的数据，包括新指标
+            enhanced['trend_analysis'] = trend_result.to_dict()
+
+        # 添加所属板块信息
+        if board_names:
+            enhanced['belong_board'] = board_names
+
         return enhanced
     
     def _describe_volume_ratio(self, volume_ratio: float) -> str:

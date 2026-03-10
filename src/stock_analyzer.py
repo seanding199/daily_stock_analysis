@@ -124,6 +124,32 @@ class TrendAnalysisResult:
     rsi_status: RSIStatus = RSIStatus.NEUTRAL
     rsi_signal: str = ""              # RSI 信号描述
 
+    # 布林带指标（新增）
+    boll_upper: float = 0.0         # 布林带上轨
+    boll_middle: float = 0.0        # 布林带中轨
+    boll_lower: float = 0.0         # 布林带下轨
+    boll_position: float = 0.0      # 价格在布林带中的位置（0-100%）
+    boll_bandwidth: float = 0.0     # 布林带宽度
+    boll_status: str = ""           # 布林带状态
+    boll_signal: str = ""           # 布林带信号
+
+    # KDJ 指标（新增）
+    kdj_k: float = 0.0              # K值
+    kdj_d: float = 0.0              # D值
+    kdj_j: float = 0.0              # J值
+    kdj_status: str = ""            # KDJ状态
+    kdj_signal: str = ""            # KDJ信号
+    kdj_buy_strength: int = 0       # 买入强度（0-5）
+    kdj_sell_strength: int = 0      # 卖出强度（0-5）
+
+    # ATR 指标（新增）
+    atr: float = 0.0                # ATR值
+    atr_pct: float = 0.0            # ATR占股价百分比
+    atr_level: str = ""             # 波动率等级
+    atr_stop_loss: float = 0.0      # 止损位（2倍ATR）
+    atr_take_profit: float = 0.0    # 止盈位（3倍ATR）
+    atr_signal: str = ""            # ATR信号
+
     # 买入信号
     buy_signal: BuySignal = BuySignal.WAIT
     signal_score: int = 0            # 综合评分 0-100
@@ -163,6 +189,27 @@ class TrendAnalysisResult:
             'rsi_24': self.rsi_24,
             'rsi_status': self.rsi_status.value,
             'rsi_signal': self.rsi_signal,
+            # 新增指标
+            'boll_upper': self.boll_upper,
+            'boll_middle': self.boll_middle,
+            'boll_lower': self.boll_lower,
+            'boll_position': self.boll_position,
+            'boll_bandwidth': self.boll_bandwidth,
+            'boll_status': self.boll_status,
+            'boll_signal': self.boll_signal,
+            'kdj_k': self.kdj_k,
+            'kdj_d': self.kdj_d,
+            'kdj_j': self.kdj_j,
+            'kdj_status': self.kdj_status,
+            'kdj_signal': self.kdj_signal,
+            'kdj_buy_strength': self.kdj_buy_strength,
+            'kdj_sell_strength': self.kdj_sell_strength,
+            'atr': self.atr,
+            'atr_pct': self.atr_pct,
+            'atr_level': self.atr_level,
+            'atr_stop_loss': self.atr_stop_loss,
+            'atr_take_profit': self.atr_take_profit,
+            'atr_signal': self.atr_signal,
         }
 
 
@@ -199,7 +246,17 @@ class StockTrendAnalyzer:
     
     def __init__(self):
         """初始化分析器"""
-        pass
+        # 导入新指标模块
+        try:
+            from src.indicators import BOLLIndicator, KDJIndicator, ATRIndicator
+            self.boll_indicator = BOLLIndicator()
+            self.kdj_indicator = KDJIndicator()
+            self.atr_indicator = ATRIndicator()
+            self._new_indicators_available = True
+            logger.info("股票趋势分析器已初始化（含新指标：BOLL/KDJ/ATR）")
+        except ImportError as e:
+            self._new_indicators_available = False
+            logger.warning(f"新指标模块导入失败，将跳过: {e}")
     
     def analyze(self, df: pd.DataFrame, code: str) -> TrendAnalysisResult:
         """
@@ -255,7 +312,11 @@ class StockTrendAnalyzer:
         # 6. RSI 分析
         self._analyze_rsi(df, result)
 
-        # 7. 生成买入信号
+        # 7. 新指标分析（BOLL/KDJ/ATR）
+        if self._new_indicators_available:
+            self._analyze_new_indicators(df, result)
+
+        # 8. 生成买入信号
         self._generate_signal(result)
 
         return result
@@ -579,6 +640,53 @@ class StockTrendAnalyzer:
             result.rsi_status = RSIStatus.OVERSOLD
             result.rsi_signal = f"⭐ RSI超卖({rsi_mid:.1f}<30)，反弹机会大"
 
+    def _analyze_new_indicators(self, df: pd.DataFrame, result: TrendAnalysisResult):
+        """
+        分析新指标（BOLL/KDJ/ATR）
+        
+        Args:
+            df: 数据DataFrame
+            result: 分析结果对象
+        """
+        try:
+            # 1. 布林带分析
+            boll_result = self.boll_indicator.calculate(df)
+            if boll_result:
+                result.boll_upper = boll_result.upper
+                result.boll_middle = boll_result.middle
+                result.boll_lower = boll_result.lower
+                result.boll_position = boll_result.position_pct
+                result.boll_bandwidth = boll_result.bandwidth
+                result.boll_status = boll_result.status.value
+                result.boll_signal = boll_result.signal
+                logger.debug(f"布林带分析完成: {boll_result.status.value}")
+            
+            # 2. KDJ 分析
+            kdj_result = self.kdj_indicator.calculate(df)
+            if kdj_result:
+                result.kdj_k = kdj_result.k
+                result.kdj_d = kdj_result.d
+                result.kdj_j = kdj_result.j
+                result.kdj_status = kdj_result.status.value
+                result.kdj_signal = kdj_result.signal
+                result.kdj_buy_strength = kdj_result.buy_strength
+                result.kdj_sell_strength = kdj_result.sell_strength
+                logger.debug(f"KDJ分析完成: {kdj_result.status.value}")
+            
+            # 3. ATR 分析
+            atr_result = self.atr_indicator.calculate(df)
+            if atr_result:
+                result.atr = atr_result.atr
+                result.atr_pct = atr_result.atr_pct
+                result.atr_level = atr_result.level.value
+                result.atr_stop_loss = atr_result.stop_loss_2atr
+                result.atr_take_profit = atr_result.take_profit_3atr
+                result.atr_signal = atr_result.signal
+                logger.debug(f"ATR分析完成: {atr_result.level.value}")
+            
+        except Exception as e:
+            logger.error(f"新指标分析失败: {e}")
+
     def _generate_signal(self, result: TrendAnalysisResult) -> None:
         """
         生成买入信号
@@ -755,10 +863,45 @@ class StockTrendAnalyzer:
             f"   RSI(12): {result.rsi_12:.1f}",
             f"   RSI(24): {result.rsi_24:.1f}",
             f"   信号: {result.rsi_signal}",
+        ]
+        
+        # 新指标显示
+        if hasattr(result, 'boll_upper') and result.boll_upper > 0:
+            lines.extend([
+                f"",
+                f"📊 布林带(BOLL): {result.boll_status}",
+                f"   上轨: {result.boll_upper:.2f}",
+                f"   中轨: {result.boll_middle:.2f}",
+                f"   下轨: {result.boll_lower:.2f}",
+                f"   位置: {result.boll_position:.1f}% | 带宽: {result.boll_bandwidth:.2f}%",
+                f"   信号: {result.boll_signal}",
+            ])
+        
+        if hasattr(result, 'kdj_k') and result.kdj_k > 0:
+            lines.extend([
+                f"",
+                f"📈 KDJ指标: {result.kdj_status}",
+                f"   K: {result.kdj_k:.1f} | D: {result.kdj_d:.1f} | J: {result.kdj_j:.1f}",
+                f"   买入强度: {'★' * result.kdj_buy_strength}{'☆' * (5-result.kdj_buy_strength)}",
+                f"   卖出强度: {'★' * result.kdj_sell_strength}{'☆' * (5-result.kdj_sell_strength)}",
+                f"   信号: {result.kdj_signal}",
+            ])
+        
+        if hasattr(result, 'atr') and result.atr > 0:
+            lines.extend([
+                f"",
+                f"📊 ATR波动率: {result.atr_level}",
+                f"   ATR: {result.atr:.2f} (占股价 {result.atr_pct:.1f}%)",
+                f"   止损位: {result.atr_stop_loss:.2f} (2倍ATR)",
+                f"   止盈位: {result.atr_take_profit:.2f} (3倍ATR)",
+                f"   信号: {result.atr_signal}",
+            ])
+        
+        lines.extend([
             f"",
             f"🎯 操作建议: {result.buy_signal.value}",
             f"   综合评分: {result.signal_score}/100",
-        ]
+        ])
 
         if result.signal_reasons:
             lines.append(f"")

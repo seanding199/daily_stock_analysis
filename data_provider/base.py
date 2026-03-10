@@ -718,6 +718,41 @@ class DataFetcherManager:
         logger.warning(f"[筹码分布] {stock_code} 所有数据源均失败")
         return None
 
+    def get_belong_board(self, stock_code: str) -> Optional[List[str]]:
+        """
+        获取股票所属板块名称列表（自动切换数据源）
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            板块名称列表，失败则返回 None
+        """
+        for fetcher in self._fetchers:
+            if hasattr(fetcher, 'get_belong_board'):
+                try:
+                    df = fetcher.get_belong_board(stock_code)
+                    if df is not None and not df.empty:
+                        # 提取板块名称列（兼容不同列名）
+                        name_col = None
+                        for col in ['板块名称', '板块', 'name', 'board_name']:
+                            if col in df.columns:
+                                name_col = col
+                                break
+                        if name_col is None and len(df.columns) > 0:
+                            name_col = df.columns[0]
+                        if name_col:
+                            board_names = df[name_col].dropna().tolist()
+                            if board_names:
+                                logger.info(f"[板块] {stock_code} 所属板块: {', '.join(board_names[:10])} (来源: {fetcher.name})")
+                                return board_names
+                except Exception as e:
+                    logger.warning(f"[板块] {fetcher.name} 获取 {stock_code} 板块失败: {e}")
+                    continue
+
+        logger.debug(f"[板块] {stock_code} 所有数据源均未获取到板块信息")
+        return None
+
     def get_stock_name(self, stock_code: str) -> Optional[str]:
         """
         获取股票中文名称（自动切换数据源）
