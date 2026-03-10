@@ -93,7 +93,7 @@ class MarketCommand(BotCommand):
 
             # 初始化 AI 分析器
             analyzer = None
-            if config.gemini_api_key or config.openai_api_key:
+            if config.openai_api_key:
                 analyzer = GeminiAnalyzer()
 
             # 执行复盘

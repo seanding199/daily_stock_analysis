@@ -67,7 +67,6 @@ class StatusCommand(BotCommand):
         }
         
         # AI 配置状态
-        status["ai_gemini"] = bool(config.gemini_api_key)
         status["ai_openai"] = bool(config.openai_api_key)
         
         # 搜索服务状态
@@ -111,7 +110,6 @@ class StatusCommand(BotCommand):
         lines.extend([
             "",
             "**🤖 AI 分析服务**",
-            f"• Gemini API: {icon(status['ai_gemini'])}",
             f"• OpenAI API: {icon(status['ai_openai'])}",
             "",
             "**🔍 搜索服务**",
@@ -127,7 +125,7 @@ class StatusCommand(BotCommand):
         ])
         
         # AI 服务总体状态
-        ai_available = status['ai_gemini'] or status['ai_openai']
+        ai_available = status['ai_openai']
         if ai_available:
             lines.extend([
                 "",
