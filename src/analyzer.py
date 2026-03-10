@@ -1001,6 +1001,27 @@ class GeminiAnalyzer:
 - 价格较昨日变化：{context.get('price_change_ratio', 'N/A')}%
 """
         
+        # 添加系统预计算的检查清单
+        if 'pre_checklist' in context:
+            checklist = context['pre_checklist']
+            prompt += f"""
+---
+
+## 🔍 系统预判检查清单（基于技术指标自动计算）
+
+以下是系统根据实际数据预先计算的检查结果，请在分析中 **逐项确认或修正**，并在 `action_checklist` 中输出最终判定：
+
+| 检查项 | 系统判定 | 依据 |
+|--------|----------|------|
+"""
+            for item in checklist:
+                prompt += f"| {item['name']} | {item['status']} | {item['detail']} |\n"
+
+            prompt += """
+> **重要**：以上为系统基于阈值自动判定，AI 应结合消息面、板块趋势等综合因素，在最终 `action_checklist` 中输出修正后的判定。
+> 如发现系统判定有误，请在分析中明确说明修正原因。
+"""
+
         # 添加所属板块信息
         if 'belong_board' in context:
             boards = context['belong_board']

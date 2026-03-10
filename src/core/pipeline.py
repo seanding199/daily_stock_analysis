@@ -410,7 +410,113 @@ class StockAnalysisPipeline:
         if board_names:
             enhanced['belong_board'] = board_names
 
+        # 预计算检查清单（基于趋势和筹码数据）
+        if trend_result:
+            enhanced['pre_checklist'] = self._build_pre_checklist(trend_result, chip_data)
+
         return enhanced
+
+    def _build_pre_checklist(
+        self,
+        trend: TrendAnalysisResult,
+        chip_data: Optional[ChipDistribution]
+    ) -> List[Dict[str, str]]:
+        """
+        基于技术指标预计算检查清单
+
+        Returns:
+            检查清单列表，每项包含 name, status(✅/⚠️/❌), detail
+        """
+        checks = []
+
+        # 1. 多头排列
+        is_bull = trend.trend_status.value in ("强势多头", "多头排列")
+        is_weak_bull = trend.trend_status.value == "弱势多头"
+        if is_bull:
+            checks.append({"name": "多头排列", "status": "✅", "detail": f"{trend.ma_alignment}"})
+        elif is_weak_bull:
+            checks.append({"name": "多头排列", "status": "⚠️", "detail": f"{trend.ma_alignment}（弱势多头）"})
+        else:
+            checks.append({"name": "多头排列", "status": "❌", "detail": f"当前为{trend.trend_status.value}，{trend.ma_alignment}"})
+
+        # 2. 乖离率
+        bias = abs(trend.bias_ma5)
+        if bias < 2:
+            checks.append({"name": "乖离率<5%", "status": "✅", "detail": f"MA5乖离率{trend.bias_ma5:+.2f}%，最佳区间"})
+        elif bias < 5:
+            checks.append({"name": "乖离率<5%", "status": "⚠️", "detail": f"MA5乖离率{trend.bias_ma5:+.2f}%，可小仓"})
+        else:
+            checks.append({"name": "乖离率<5%", "status": "❌", "detail": f"MA5乖离率{trend.bias_ma5:+.2f}%，严禁追高！"})
+
+        # 3. 量能配合
+        vol_status = trend.volume_status.value
+        if vol_status in ("缩量回调", "放量上涨"):
+            checks.append({"name": "量能配合", "status": "✅", "detail": f"{vol_status}，5日量比{trend.volume_ratio_5d:.2f}"})
+        elif vol_status in ("量能正常", "缩量上涨"):
+            checks.append({"name": "量能配合", "status": "⚠️", "detail": f"{vol_status}，5日量比{trend.volume_ratio_5d:.2f}"})
+        else:
+            checks.append({"name": "量能配合", "status": "❌", "detail": f"{vol_status}，5日量比{trend.volume_ratio_5d:.2f}"})
+
+        # 4. 筹码健康
+        if chip_data:
+            profit = chip_data.profit_ratio
+            conc = chip_data.concentration_90
+            if 0.3 <= profit <= 0.7 and conc < 0.15:
+                checks.append({"name": "筹码健康", "status": "✅", "detail": f"获利{profit:.0%}，集中度{conc:.1%}"})
+            elif profit > 0.9 or conc > 0.25:
+                checks.append({"name": "筹码健康", "status": "❌", "detail": f"获利{profit:.0%}，集中度{conc:.1%}，筹码松动"})
+            else:
+                checks.append({"name": "筹码健康", "status": "⚠️", "detail": f"获利{profit:.0%}，集中度{conc:.1%}"})
+        else:
+            checks.append({"name": "筹码健康", "status": "⚠️", "detail": "数据缺失"})
+
+        # 5. MACD
+        macd_val = trend.macd_status.value
+        if macd_val in ("金叉", "多头"):
+            status = "✅" if trend.macd_dif > 0 else "⚠️"
+            above_zero = "零轴上方" if trend.macd_dif > 0 else "零轴下方"
+            checks.append({"name": "MACD多头", "status": status, "detail": f"{macd_val}，DIF={trend.macd_dif:.4f}，{above_zero}"})
+        else:
+            checks.append({"name": "MACD多头", "status": "❌", "detail": f"{macd_val}，DIF={trend.macd_dif:.4f}"})
+
+        # 6. RSI安全区
+        rsi = trend.rsi_12
+        if 30 <= rsi <= 70:
+            checks.append({"name": "RSI安全区", "status": "✅", "detail": f"RSI(12)={rsi:.1f}，{trend.rsi_status.value}"})
+        elif rsi > 70:
+            checks.append({"name": "RSI安全区", "status": "❌", "detail": f"RSI(12)={rsi:.1f}，超买区域"})
+        else:
+            checks.append({"name": "RSI安全区", "status": "⚠️", "detail": f"RSI(12)={rsi:.1f}，超卖区域"})
+
+        # 7. BOLL突破
+        if trend.boll_upper > 0:
+            pos = trend.boll_position
+            if pos > 80:
+                checks.append({"name": "BOLL突破", "status": "✅", "detail": f"价格位置{pos:.0f}%，{trend.boll_status}"})
+            elif pos > 40:
+                checks.append({"name": "BOLL突破", "status": "⚠️", "detail": f"价格位置{pos:.0f}%，{trend.boll_status}"})
+            else:
+                checks.append({"name": "BOLL突破", "status": "❌", "detail": f"价格位置{pos:.0f}%，{trend.boll_status}"})
+
+        # 8. KDJ买入信号
+        if trend.kdj_k > 0:
+            if trend.kdj_buy_strength >= 3:
+                checks.append({"name": "KDJ买入", "status": "✅", "detail": f"K={trend.kdj_k:.1f} D={trend.kdj_d:.1f} J={trend.kdj_j:.1f}，买入强度{trend.kdj_buy_strength}/5星"})
+            elif trend.kdj_sell_strength >= 3:
+                checks.append({"name": "KDJ买入", "status": "❌", "detail": f"K={trend.kdj_k:.1f} D={trend.kdj_d:.1f} J={trend.kdj_j:.1f}，卖出强度{trend.kdj_sell_strength}/5星"})
+            else:
+                checks.append({"name": "KDJ买入", "status": "⚠️", "detail": f"K={trend.kdj_k:.1f} D={trend.kdj_d:.1f} J={trend.kdj_j:.1f}，{trend.kdj_status}"})
+
+        # 9. ATR风险
+        if trend.atr > 0:
+            if trend.atr_pct < 5:
+                checks.append({"name": "ATR风险可控", "status": "✅", "detail": f"波动率{trend.atr_pct:.1f}%（{trend.atr_level}），止损{trend.atr_stop_loss:.2f}，止盈{trend.atr_take_profit:.2f}"})
+            elif trend.atr_pct < 8:
+                checks.append({"name": "ATR风险可控", "status": "⚠️", "detail": f"波动率{trend.atr_pct:.1f}%（{trend.atr_level}），止损{trend.atr_stop_loss:.2f}，止盈{trend.atr_take_profit:.2f}"})
+            else:
+                checks.append({"name": "ATR风险可控", "status": "❌", "detail": f"波动率{trend.atr_pct:.1f}%（{trend.atr_level}），波动过大"})
+
+        return checks
     
     def _describe_volume_ratio(self, volume_ratio: float) -> str:
         """
