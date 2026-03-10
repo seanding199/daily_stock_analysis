@@ -204,9 +204,9 @@ def test_data_fetch(stock_code: str = "600519"):
 
 def test_llm():
     """测试 LLM 调用"""
-    print_header("4. LLM (Gemini) 调用测试")
+    print_header("4. LLM (AI) 调用测试")
     
-    from src.analyzer import GeminiAnalyzer
+    from src.analyzer import AIAnalyzer
     from src.config import get_config
     import time
     
@@ -230,7 +230,7 @@ def test_llm():
         print(f"  提示: 可以设置环境变量 HTTPS_PROXY=http://your-proxy:port")
         return False
     
-    analyzer = GeminiAnalyzer()
+    analyzer = AIAnalyzer()
     
     print_section("模型初始化")
     if analyzer.is_available():
@@ -263,7 +263,7 @@ def test_llm():
     
     print_section("发送测试请求")
     print(f"  测试股票: 贵州茅台 (600519)")
-    print(f"  正在调用 Gemini API（超时: 60秒）...")
+    print(f"  正在调用 AI API（超时: 60秒）...")
     
     start_time = time.time()
     

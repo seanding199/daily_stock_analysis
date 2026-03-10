@@ -5,9 +5,8 @@ A股自选股智能分析系统 - AI分析层
 ===================================
 
 职责：
-1. 封装 Gemini API 调用逻辑
-2. 利用 Google Search Grounding 获取实时新闻
-3. 结合技术面和消息面生成分析报告
+1. 封装 AI API 调用逻辑（OpenAI 兼容接口）
+2. 结合技术面和消息面生成分析报告
 """
 
 import json
@@ -310,9 +309,9 @@ class AnalysisResult:
         return star_map.get(self.confidence_level, '⭐⭐')
 
 
-class GeminiAnalyzer:
+class AIAnalyzer:
     """
-    Gemini AI 分析器
+    AI 分析器（OpenAI 兼容接口）
 
     职责：
     1. 调用 Google Gemini API 进行股票分析
@@ -320,7 +319,7 @@ class GeminiAnalyzer:
     3. 解析 AI 返回的 JSON 格式结果
 
     使用方式：
-        analyzer = GeminiAnalyzer()
+        analyzer = AIAnalyzer()
         result = analyzer.analyze(context, news_context)
     """
 
@@ -440,11 +439,16 @@ class GeminiAnalyzer:
                 "risk_control": "风控策略描述"
             },
             "action_checklist": [
-                "✅/⚠️/❌ 检查项1：多头排列",
-                "✅/⚠️/❌ 检查项2：乖离率<5%",
-                "✅/⚠️/❌ 检查项3：量能配合",
-                "✅/⚠️/❌ 检查项4：无重大利空",
-                "✅/⚠️/❌ 检查项5：筹码健康"
+                "✅/⚠️/❌ 检查项1：多头排列 (MA5>MA10>MA20)",
+                "✅/⚠️/❌ 检查项2：乖离率<5%（当前X%）",
+                "✅/⚠️/❌ 检查项3：量能配合（量比X）",
+                "✅/⚠️/❌ 检查项4：无重大利空（结合消息面）",
+                "✅/⚠️/❌ 检查项5：筹码健康（获利比例X%）",
+                "✅/⚠️/❌ 检查项6：MACD 多头（DIF/DEA状态）",
+                "✅/⚠️/❌ 检查项7：RSI 安全区（当前X）",
+                "✅/⚠️/❌ 检查项8：BOLL 突破信号",
+                "✅/⚠️/❌ 检查项9：KDJ 买入信号",
+                "✅/⚠️/❌ 检查项10：ATR 风险可控（波动率X%）"
             ]
         }
     },
@@ -1018,8 +1022,8 @@ class GeminiAnalyzer:
                 prompt += f"| {item['name']} | {item['status']} | {item['detail']} |\n"
 
             prompt += """
-> **重要**：以上为系统基于阈值自动判定，AI 应结合消息面、板块趋势等综合因素，在最终 `action_checklist` 中输出修正后的判定。
-> 如发现系统判定有误，请在分析中明确说明修正原因。
+> **重要**：以上为系统基于阈值自动判定，AI 应结合消息面、板块趋势等综合因素，在最终 `action_checklist` 中**逐项输出全部 10 项**修正后的判定。
+> 如发现系统判定有误，请在分析中明确说明修正原因。不要遗漏任何检查项。
 """
 
         # 添加所属板块信息
@@ -1517,9 +1521,9 @@ ATR=X.XX元（真实波幅），占当前股价X.XX%
 
 
 # 便捷函数
-def get_analyzer() -> GeminiAnalyzer:
+def get_analyzer() -> AIAnalyzer:
     """获取 Gemini 分析器实例"""
-    return GeminiAnalyzer()
+    return AIAnalyzer()
 
 
 if __name__ == "__main__":
@@ -1548,11 +1552,14 @@ if __name__ == "__main__":
         'price_change_ratio': 1.5,
     }
     
-    analyzer = GeminiAnalyzer()
+    analyzer = AIAnalyzer()
     
     if analyzer.is_available():
         print("=== AI 分析测试 ===")
         result = analyzer.analyze(test_context)
         print(f"分析结果: {result.to_dict()}")
     else:
-        print("Gemini API 未配置，跳过测试")
+        print("AI API 未配置，跳过测试")
+
+# 向后兼容别名
+GeminiAnalyzer = AIAnalyzer

@@ -17,7 +17,7 @@ from typing import Optional
 from src.notification import NotificationService
 from src.market_analyzer import MarketAnalyzer
 from src.search_service import SearchService
-from src.analyzer import GeminiAnalyzer
+from src.analyzer import AIAnalyzer
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 def run_market_review(
     notifier: NotificationService, 
-    analyzer: Optional[GeminiAnalyzer] = None, 
+    analyzer: Optional[AIAnalyzer] = None, 
     search_service: Optional[SearchService] = None,
     send_notification: bool = True
 ) -> Optional[str]:

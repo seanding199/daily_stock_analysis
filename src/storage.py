@@ -403,7 +403,18 @@ class DatabaseManager:
             echo=False,  # 设为 True 可查看 SQL 语句
             pool_pre_ping=True,  # 连接健康检查
         )
-        
+
+        # 启用 WAL 模式（提升并发读写性能）
+        if db_url.startswith("sqlite"):
+            from sqlalchemy import event, text
+
+            @event.listens_for(self._engine, "connect")
+            def set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.close()
+
         # 创建 Session 工厂
         self._SessionLocal = sessionmaker(
             bind=self._engine,

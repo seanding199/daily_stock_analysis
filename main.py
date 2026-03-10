@@ -51,7 +51,8 @@ from src.notification import NotificationService
 from src.core.pipeline import StockAnalysisPipeline
 from src.core.market_review import run_market_review
 from src.search_service import SearchService
-from src.analyzer import GeminiAnalyzer
+from src.analyzer import AIAnalyzer
+from src.trading_calendar import is_trading_day
 
 
 logger = logging.getLogger(__name__)
@@ -502,7 +503,7 @@ def main() -> int:
                 )
             
             if config.openai_api_key:
-                analyzer = GeminiAnalyzer()
+                analyzer = AIAnalyzer()
                 if not analyzer.is_available():
                     logger.warning("AI 分析器初始化后不可用，请检查 API Key 配置")
                     analyzer = None
@@ -521,10 +522,13 @@ def main() -> int:
         if args.schedule or config.schedule_enabled:
             logger.info("模式: 定时任务")
             logger.info(f"每日执行时间: {config.schedule_time}")
-            
+
             from src.scheduler import run_with_schedule
-            
+
             def scheduled_task():
+                if not is_trading_day():
+                    logger.info("今日非交易日，跳过分析")
+                    return
                 run_full_analysis(config, args, stock_codes)
             
             run_with_schedule(
