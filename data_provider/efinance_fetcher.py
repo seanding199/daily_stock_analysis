@@ -865,40 +865,50 @@ class EfinanceFetcher(BaseFetcher):
             logger.error(f"[API错误] 获取 {stock_code} 基本信息失败: {e}")
             return None
     
-    def get_belong_board(self, stock_code: str) -> Optional[pd.DataFrame]:
+    def get_belong_board(self, stock_code: str, timeout: int = 15) -> Optional[pd.DataFrame]:
         """
-        获取股票所属板块
-        
+        获取股票所属板块（带超时控制）
+
         数据来源：ef.stock.get_belong_board()
-        
+
         Args:
             stock_code: 股票代码
-            
+            timeout: 超时秒数，默认15秒，超时则快速返回None
+
         Returns:
-            所属板块 DataFrame，获取失败返回 None
+            所属板块 DataFrame，获取失败或超时返回 None
         """
         import efinance as ef
-        
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
         try:
             # 防封禁策略
             self._set_random_user_agent()
             self._enforce_rate_limit()
-            
-            logger.info(f"[API调用] ef.stock.get_belong_board(stock_code={stock_code}) 获取所属板块...")
+
+            logger.info(f"[API调用] ef.stock.get_belong_board(stock_code={stock_code}) 获取所属板块 (超时={timeout}s)...")
             import time as _time
             api_start = _time.time()
-            
-            df = ef.stock.get_belong_board(stock_code)
-            
+
+            # 用线程池实现超时控制，避免网络不通时长时间阻塞
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(ef.stock.get_belong_board, stock_code)
+                try:
+                    df = future.result(timeout=timeout)
+                except FuturesTimeoutError:
+                    api_elapsed = _time.time() - api_start
+                    logger.warning(f"[API超时] ef.stock.get_belong_board({stock_code}) 超时 ({api_elapsed:.1f}s > {timeout}s)，跳过板块获取")
+                    return None
+
             api_elapsed = _time.time() - api_start
-            
+
             if df is not None and not df.empty:
                 logger.info(f"[API返回] ef.stock.get_belong_board 成功: 返回 {len(df)} 个板块, 耗时 {api_elapsed:.2f}s")
                 return df
             else:
                 logger.warning(f"[API返回] 未获取到 {stock_code} 的板块信息")
                 return None
-                
+
         except Exception as e:
             logger.error(f"[API错误] 获取 {stock_code} 所属板块失败: {e}")
             return None

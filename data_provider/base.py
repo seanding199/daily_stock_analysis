@@ -720,7 +720,9 @@ class DataFetcherManager:
 
     def get_belong_board(self, stock_code: str) -> Optional[List[str]]:
         """
-        获取股票所属板块名称列表（自动切换数据源）
+        获取股票所属板块名称列表（带缓存，自动切换数据源）
+
+        板块数据日内不变，首次获取后缓存，避免重复请求。
 
         Args:
             stock_code: 股票代码
@@ -728,6 +730,15 @@ class DataFetcherManager:
         Returns:
             板块名称列表，失败则返回 None
         """
+        # 缓存检查（板块信息日内不变）
+        if not hasattr(self, '_board_cache'):
+            self._board_cache: Dict[str, Optional[List[str]]] = {}
+        if stock_code in self._board_cache:
+            cached = self._board_cache[stock_code]
+            if cached:
+                logger.debug(f"[板块] {stock_code} 命中缓存: {', '.join(cached[:5])}")
+            return cached
+
         for fetcher in self._fetchers:
             if hasattr(fetcher, 'get_belong_board'):
                 try:
@@ -745,12 +756,14 @@ class DataFetcherManager:
                             board_names = df[name_col].dropna().tolist()
                             if board_names:
                                 logger.info(f"[板块] {stock_code} 所属板块: {', '.join(board_names[:10])} (来源: {fetcher.name})")
+                                self._board_cache[stock_code] = board_names
                                 return board_names
                 except Exception as e:
                     logger.warning(f"[板块] {fetcher.name} 获取 {stock_code} 板块失败: {e}")
                     continue
 
         logger.debug(f"[板块] {stock_code} 所有数据源均未获取到板块信息")
+        self._board_cache[stock_code] = None
         return None
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
