@@ -831,56 +831,23 @@ class AIAnalyzer:
             
         today = context.get('today', {})
         
-        # ========== 构建决策仪表盘格式的输入 ==========
-        prompt = f"""# 决策仪表盘分析请求
+        # ========== 构建紧凑格式的输入 ==========
+        prompt = f"""# {stock_name}({code}) 决策分析 | {context.get('date', '未知')}
 
-## 📊 股票基础信息
-| 项目 | 数据 |
-|------|------|
-| 股票代码 | **{code}** |
-| 股票名称 | **{stock_name}** |
-| 分析日期 | {context.get('date', '未知')} |
-
----
-
-## 📈 技术面数据
-
-### 今日行情
-| 指标 | 数值 |
-|------|------|
-| 收盘价 | {today.get('close', 'N/A')} 元 |
-| 开盘价 | {today.get('open', 'N/A')} 元 |
-| 最高价 | {today.get('high', 'N/A')} 元 |
-| 最低价 | {today.get('low', 'N/A')} 元 |
-| 涨跌幅 | {today.get('pct_chg', 'N/A')}% |
-| 成交量 | {self._format_volume(today.get('volume'))} |
-| 成交额 | {self._format_amount(today.get('amount'))} |
-
-### 均线系统（关键判断指标）
-| 均线 | 数值 | 说明 |
-|------|------|------|
-| MA5 | {today.get('ma5', 'N/A')} | 短期趋势线 |
-| MA10 | {today.get('ma10', 'N/A')} | 中短期趋势线 |
-| MA20 | {today.get('ma20', 'N/A')} | 中期趋势线 |
-| MA60 | {today.get('ma60', 'N/A')} | 长期趋势线 |
-| 均线形态 | {context.get('ma_status', '未知')} | 多头/空头/缠绕 |
+## 行情数据
+收盘={today.get('close', 'N/A')} 开盘={today.get('open', 'N/A')} 最高={today.get('high', 'N/A')} 最低={today.get('low', 'N/A')} 涨跌幅={today.get('pct_chg', 'N/A')}%
+成交量={self._format_volume(today.get('volume'))} 成交额={self._format_amount(today.get('amount'))}
+MA5={today.get('ma5', 'N/A')} MA10={today.get('ma10', 'N/A')} MA20={today.get('ma20', 'N/A')} MA60={today.get('ma60', 'N/A')} 均线形态={context.get('ma_status', '未知')}
 """
         
-        # 添加实时行情数据（量比、换手率等）
+        # 添加实时行情数据
         if 'realtime' in context:
             rt = context['realtime']
             prompt += f"""
-### 实时行情增强数据
-| 指标 | 数值 | 解读 |
-|------|------|------|
-| 当前价格 | {rt.get('price', 'N/A')} 元 | |
-| **量比** | **{rt.get('volume_ratio', 'N/A')}** | {rt.get('volume_ratio_desc', '')} |
-| **换手率** | **{rt.get('turnover_rate', 'N/A')}%** | |
-| 市盈率(动态) | {rt.get('pe_ratio', 'N/A')} | |
-| 市净率 | {rt.get('pb_ratio', 'N/A')} | |
-| 总市值 | {self._format_amount(rt.get('total_mv'))} | |
-| 流通市值 | {self._format_amount(rt.get('circ_mv'))} | |
-| 60日涨跌幅 | {rt.get('change_60d', 'N/A')}% | 中期表现 |
+## 实时增强
+现价={rt.get('price', 'N/A')} 量比={rt.get('volume_ratio', 'N/A')}({rt.get('volume_ratio_desc', '')}) 换手率={rt.get('turnover_rate', 'N/A')}%
+PE={rt.get('pe_ratio', 'N/A')} PB={rt.get('pb_ratio', 'N/A')} 总市值={self._format_amount(rt.get('total_mv'))} 流通市值={self._format_amount(rt.get('circ_mv'))}
+60日涨跌幅={rt.get('change_60d', 'N/A')}%
 """
         
         # 添加筹码分布数据
@@ -888,346 +855,111 @@ class AIAnalyzer:
             chip = context['chip']
             profit_ratio = chip.get('profit_ratio', 0)
             prompt += f"""
-### 筹码分布数据（效率指标）
-| 指标 | 数值 | 健康标准 |
-|------|------|----------|
-| **获利比例** | **{profit_ratio:.1%}** | 70-90%时警惕 |
-| 平均成本 | {chip.get('avg_cost', 'N/A')} 元 | 现价应高于5-15% |
-| 90%筹码集中度 | {chip.get('concentration_90', 0):.2%} | <15%为集中 |
-| 70%筹码集中度 | {chip.get('concentration_70', 0):.2%} | |
-| 筹码状态 | {chip.get('chip_status', '未知')} | |
+## 筹码分布
+获利比例={profit_ratio:.1%}(70-90%警惕) 平均成本={chip.get('avg_cost', 'N/A')}元 90%集中度={chip.get('concentration_90', 0):.2%} 70%集中度={chip.get('concentration_70', 0):.2%} 状态={chip.get('chip_status', '未知')}
 """
         
-        # 添加趋势分析结果（基于交易理念的预判）
+        # 添加趋势分析结果
         if 'trend_analysis' in context:
             trend = context['trend_analysis']
-            bias_warning = "🚨 超过5%，严禁追高！" if trend.get('bias_ma5', 0) > 5 else "✅ 安全范围"
+            bias_warning = "🚨严禁追高" if trend.get('bias_ma5', 0) > 5 else ""
             prompt += f"""
-### 趋势分析预判（基于交易理念）
-| 指标 | 数值 | 判定 |
-|------|------|------|
-| 趋势状态 | {trend.get('trend_status', '未知')} | |
-| 均线排列 | {trend.get('ma_alignment', '未知')} | MA5>MA10>MA20为多头 |
-| 趋势强度 | {trend.get('trend_strength', 0)}/100 | |
-| **乖离率(MA5)** | **{trend.get('bias_ma5', 0):+.2f}%** | {bias_warning} |
-| 乖离率(MA10) | {trend.get('bias_ma10', 0):+.2f}% | |
-| 乖离率(MA20) | {trend.get('bias_ma20', 0):+.2f}% | |
-| Bias(6) | {trend.get('bias_6', 0):+.2f}% | 短期乖离 |
-| Bias(12) | {trend.get('bias_12', 0):+.2f}% | 中期乖离 |
-| Bias(24) | {trend.get('bias_24', 0):+.2f}% | 长期乖离 |
-| 量能状态 | {trend.get('volume_status', '未知')} | {trend.get('volume_trend', '')} |
-| 5日量比 | {trend.get('volume_ratio_5d', 0):.2f} | 相对5日均量 |
-| 系统信号 | {trend.get('buy_signal', '未知')} | |
-| 系统评分 | {trend.get('signal_score', 0)}/100 | |
-| **支撑位(MA5)** | **{trend.get('support_ma5', 'N/A')} 元** | 短期关键支撑 |
-| **支撑位(MA10)** | **{trend.get('support_ma10', 'N/A')} 元** | 中期关键支撑 |
+## 趋势预判
+趋势={trend.get('trend_status', '未知')} 排列={trend.get('ma_alignment', '未知')} 强度={trend.get('trend_strength', 0)}/100
+乖离率: MA5={trend.get('bias_ma5', 0):+.2f}%{bias_warning} MA10={trend.get('bias_ma10', 0):+.2f}% MA20={trend.get('bias_ma20', 0):+.2f}%
+Bias: 6日={trend.get('bias_6', 0):+.2f}% 12日={trend.get('bias_12', 0):+.2f}% 24日={trend.get('bias_24', 0):+.2f}%
+量能={trend.get('volume_status', '未知')}({trend.get('volume_trend', '')}) 5日量比={trend.get('volume_ratio_5d', 0):.2f}
+系统信号={trend.get('buy_signal', '未知')} 评分={trend.get('signal_score', 0)}/100
+支撑: MA5={trend.get('support_ma5', 'N/A')}元 MA10={trend.get('support_ma10', 'N/A')}元
 
-### 技术指标详解
-
-#### MACD 指标
-| 指标 | 数值 | 状态 |
-|------|------|------|
-| DIF | {trend.get('macd_dif', 0):.4f} | |
-| DEA | {trend.get('macd_dea', 0):.4f} | |
-| MACD柱 | {trend.get('macd_bar', 0):.4f} | |
-| MACD状态 | {trend.get('macd_status', '未知')} | |
-| 信号 | {trend.get('macd_signal', '未知')} | |
-
-#### RSI 指标（超买超卖）
-| 指标 | 数值 | 解读 |
-|------|------|------|
-| RSI(6) | {trend.get('rsi_6', 0):.1f} | 短期 |
-| RSI(12) | {trend.get('rsi_12', 0):.1f} | 中期 |
-| RSI(24) | {trend.get('rsi_24', 0):.1f} | 长期 |
-| RSI状态 | {trend.get('rsi_status', '未知')} | >70超买 <30超卖 |
-| 信号 | {trend.get('rsi_signal', '未知')} | |
+## 技术指标
+MACD: DIF={trend.get('macd_dif', 0):.4f} DEA={trend.get('macd_dea', 0):.4f} 柱={trend.get('macd_bar', 0):.4f} 状态={trend.get('macd_status', '未知')} 信号={trend.get('macd_signal', '未知')}
+RSI: 6日={trend.get('rsi_6', 0):.1f} 12日={trend.get('rsi_12', 0):.1f} 24日={trend.get('rsi_24', 0):.1f} 状态={trend.get('rsi_status', '未知')} {trend.get('rsi_signal', '')}
 """
             
             # 添加新指标（BOLL/KDJ/ATR）
             if trend.get('boll_upper', 0) > 0:
-                prompt += f"""
-#### 布林带（BOLL）- 波动区间
-| 指标 | 数值 | 解读 |
-|------|------|------|
-| 上轨 | {trend.get('boll_upper', 0):.2f} 元 | 压力位 |
-| 中轨 | {trend.get('boll_middle', 0):.2f} 元 | 支撑/压力 |
-| 下轨 | {trend.get('boll_lower', 0):.2f} 元 | 支撑位 |
-| 价格位置 | {trend.get('boll_position', 0):.1f}% | 0-100%，50%为中性 |
-| 带宽 | {trend.get('boll_bandwidth', 0):.2f}% | <10%收窄，变盘在即 |
-| 状态 | {trend.get('boll_status', '未知')} | |
-| 信号 | {trend.get('boll_signal', '未知')} | |
-"""
-            
-            if trend.get('kdj_k', 0) > 0:
-                kdj_buy_stars = '★' * trend.get('kdj_buy_strength', 0) + '☆' * (5 - trend.get('kdj_buy_strength', 0))
-                kdj_sell_stars = '★' * trend.get('kdj_sell_strength', 0) + '☆' * (5 - trend.get('kdj_sell_strength', 0))
-                prompt += f"""
-#### KDJ 指标 - 短线买卖点
-| 指标 | 数值 | 解读 |
-|------|------|------|
-| K值 | {trend.get('kdj_k', 0):.1f} | 快线 |
-| D值 | {trend.get('kdj_d', 0):.1f} | 慢线 |
-| J值 | {trend.get('kdj_j', 0):.1f} | J<0超卖，J>100超买 |
-| 状态 | {trend.get('kdj_status', '未知')} | |
-| 买入强度 | {kdj_buy_stars} ({trend.get('kdj_buy_strength', 0)}/5) | 5星=强烈买入 |
-| 卖出强度 | {kdj_sell_stars} ({trend.get('kdj_sell_strength', 0)}/5) | 5星=强烈卖出 |
-| 信号 | {trend.get('kdj_signal', '未知')} | |
-"""
-            
-            if trend.get('atr', 0) > 0:
-                prompt += f"""
-#### ATR 波动率 - 风险管理
-| 指标 | 数值 | 解读 |
-|------|------|------|
-| ATR值 | {trend.get('atr', 0):.2f} 元 | |
-| ATR占比 | {trend.get('atr_pct', 0):.2f}% | 占当前股价 |
-| 波动等级 | {trend.get('atr_level', '未知')} | 极低/低/正常/高/极高 |
-| **止损位** | **{trend.get('atr_stop_loss', 0):.2f} 元** | 建议止损位（2倍ATR） |
-| **止盈位** | **{trend.get('atr_take_profit', 0):.2f} 元** | 建议止盈位（3倍ATR） |
-| 信号 | {trend.get('atr_signal', '未知')} | |
-"""
-            
-            prompt += f"""
-#### 系统分析理由
-**买入理由**：
-{chr(10).join('- ' + r for r in trend.get('signal_reasons', ['无'])) if trend.get('signal_reasons') else '- 无'}
+                prompt += f"BOLL: 上轨={trend.get('boll_upper', 0):.2f} 中轨={trend.get('boll_middle', 0):.2f} 下轨={trend.get('boll_lower', 0):.2f} 位置={trend.get('boll_position', 0):.1f}% 带宽={trend.get('boll_bandwidth', 0):.2f}% 状态={trend.get('boll_status', '未知')} 信号={trend.get('boll_signal', '未知')}\n"
 
-**风险因素**：
-{chr(10).join('- ' + r for r in trend.get('risk_factors', ['无'])) if trend.get('risk_factors') else '- 无'}
-"""
+            if trend.get('kdj_k', 0) > 0:
+                prompt += f"KDJ: K={trend.get('kdj_k', 0):.1f} D={trend.get('kdj_d', 0):.1f} J={trend.get('kdj_j', 0):.1f} 状态={trend.get('kdj_status', '未知')} 买入强度={trend.get('kdj_buy_strength', 0)}/5 卖出强度={trend.get('kdj_sell_strength', 0)}/5 信号={trend.get('kdj_signal', '未知')}\n"
+
+            if trend.get('atr', 0) > 0:
+                prompt += f"ATR: {trend.get('atr', 0):.2f}元(占股价{trend.get('atr_pct', 0):.2f}%) 波动={trend.get('atr_level', '未知')} 止损={trend.get('atr_stop_loss', 0):.2f} 止盈={trend.get('atr_take_profit', 0):.2f} 信号={trend.get('atr_signal', '未知')}\n"
+            
+            reasons = trend.get('signal_reasons', [])
+            risk_factors = trend.get('risk_factors', [])
+            if reasons:
+                prompt += f"买入理由: {'; '.join(reasons)}\n"
+            if risk_factors:
+                prompt += f"风险因素: {'; '.join(risk_factors)}\n"
         
         # 添加昨日对比数据
         if 'yesterday' in context:
-            volume_change = context.get('volume_change_ratio', 'N/A')
-            prompt += f"""
-### 量价变化
-- 成交量较昨日变化：{volume_change}倍
-- 价格较昨日变化：{context.get('price_change_ratio', 'N/A')}%
-"""
+            prompt += f"较昨日: 量变={context.get('volume_change_ratio', 'N/A')}倍 价变={context.get('price_change_ratio', 'N/A')}%\n"
         
         # 添加系统预计算的检查清单
         if 'pre_checklist' in context:
             checklist = context['pre_checklist']
-            prompt += f"""
----
-
-## 🔍 系统预判检查清单（基于技术指标自动计算）
-
-以下是系统根据实际数据预先计算的检查结果，请在分析中 **逐项确认或修正**，并在 `action_checklist` 中输出最终判定：
-
-| 检查项 | 系统判定 | 依据 |
-|--------|----------|------|
-"""
+            prompt += "\n## 系统预判检查清单（请逐项确认或修正，输出到 action_checklist）\n"
             for item in checklist:
-                prompt += f"| {item['name']} | {item['status']} | {item['detail']} |\n"
-
-            prompt += """
-> **重要**：以上为系统基于阈值自动判定，AI 应结合消息面、板块趋势等综合因素，在最终 `action_checklist` 中**逐项输出全部 10 项**修正后的判定。
-> 如发现系统判定有误，请在分析中明确说明修正原因。不要遗漏任何检查项。
-"""
+                prompt += f"- {item['status']} {item['name']}: {item['detail']}\n"
+            prompt += "> 在 action_checklist 中逐项输出全部 10 项修正后判定，有误请说明修正原因。\n"
 
         # 添加所属板块信息
         if 'belong_board' in context:
             boards = context['belong_board']
+            prompt += f"\n所属板块: {' | '.join(boards)}\n"
+
+        # 注入上次分析结论（保持连贯性）
+        if 'prev_analysis' in context:
+            prev = context['prev_analysis']
             prompt += f"""
-### 所属板块
-该股票所属板块：**{' | '.join(boards)}**
-
-> 请结合板块信息分析该股票在行业中的地位、板块整体趋势、以及板块轮动对个股的影响。
+## 上次分析结论（{prev.get('date', '未知')}）
+评分={prev.get('score', 'N/A')} 趋势={prev.get('trend', 'N/A')} 建议={prev.get('advice', 'N/A')}
+摘要: {prev.get('summary', '无')}
+> 请对比上次结论，说明观点是否变化及原因。如维持则简要确认，如调整请明确说明变化依据。
 """
 
-        # 添加新闻搜索结果（重点区域）
-        prompt += """
----
-
-## 📰 舆情情报
-"""
+        # 添加新闻搜索结果
         if news_context:
-            prompt += f"""
-以下是 **{stock_name}({code})** 近7日的新闻搜索结果，请重点提取：
-1. 🚨 **风险警报**：减持、处罚、利空
-2. 🎯 **利好催化**：业绩、合同、政策
-3. 📊 **业绩预期**：年报预告、业绩快报
-
-```
-{news_context}
-```
-"""
+            prompt += f"\n## 舆情情报(重点提取:风险警报/利好催化/业绩预期)\n{news_context}\n"
         else:
-            prompt += """
-未搜索到该股票近期的相关新闻。请主要依据技术面数据进行分析。
-"""
+            prompt += "\n无近期新闻，主要依据技术面分析。\n"
 
         # 注入缺失数据警告
         if context.get('data_missing'):
-            prompt += """
-⚠️ **数据缺失警告**
-由于接口限制，当前无法获取完整的实时行情和技术指标数据。
-请 **忽略上述表格中的 N/A 数据**，重点依据 **【📰 舆情情报】** 中的新闻进行基本面和情绪面分析。
-在回答技术面问题（如均线、乖离率）时，请直接说明“数据缺失，无法判断”，**严禁编造数据**。
-"""
+            prompt += "\n⚠️ 数据缺失：忽略N/A数据，重点依据舆情分析。技术面无数据时回答\"数据缺失\"，严禁编造。\n"
 
         # 明确的输出要求
         prompt += f"""
 ---
+## 分析任务
 
-## ✅ 分析任务
+为 **{stock_name}({code})** 生成决策仪表盘 JSON。如名称不正确请修正。
 
-请为 **{stock_name}({code})** 生成【决策仪表盘】，严格按照 JSON 格式输出。
+### 必须回答的关键问题：
+1. 均线是否多头排列？乖离率是否<5%（超过标注严禁追高）？
+2. 量价配合如何？量比/换手率是否异常？有无量价背离？
+3. MACD/RSI/BOLL/KDJ/ATR 各指标状态和信号？
+4. 筹码结构健康否？估值水平？
+5. 消息面有无利空/利好催化？
+6. 风险收益比？具体进场/止损/止盈点位？空仓者和持仓者各自策略？
 
-### ⚠️ 重要：股票名称确认
-如果上方显示的股票名称为"股票{code}"或不正确，请在分析开头**明确输出该股票的正确中文全称**。
+### JSON 输出要求：
+- stock_name: 正确中文全称
+- sentiment_score: 0-100
+- trend_prediction: 强烈看多/看多/震荡/看空/强烈看空
+- operation_advice: 买入/加仓/持有/减仓/卖出/观望
+- decision_type: buy/hold/sell
+- confidence_level: 高/中/低
+- dashboard: {{core_conclusion(one_sentence/signal_type/position_advice), data_perspective, sniper_points(ideal_buy/secondary_buy/stop_loss/take_profit/position_size), action_checklist(10项,✅/⚠️/❌)}}
+- technical_analysis: 包含趋势/MACD/RSI/BOLL/KDJ/ATR/量价/乖离率/支撑压力/风险的完整分析
+- trend_analysis/news_summary/analysis_summary/risk_warning/buy_reason 等文本字段
 
-### 重点关注（必须明确回答）：
+**规则**：数值从数据精确提取严禁编造；action_checklist 必须输出全部10项；分析客观可操作。
 
-#### 📈 趋势判断
-1. ❓ 是否满足 MA5>MA10>MA20>MA60 多头排列？当前均线形态是什么？
-2. ❓ 当前乖离率是否在安全范围内（<5%）？—— 超过5%必须标注"严禁追高"
-3. ❓ Bias(6/12/24) 乖离指标显示的市场情绪如何？是否过度乐观或悲观？
-4. ❓ 当前价格距离关键支撑位（MA5/MA10）有多远？跌破风险大吗？
-
-#### 💰 量价配合
-5. ❓ 量能是否配合（缩量回调/放量突破）？5日量比是多少？
-6. ❓ 换手率水平如何？是否存在异常放量或缩量？
-7. ❓ 量价背离情况：价涨量缩？价跌量增？
-
-#### 🎯 技术指标
-8. ❓ **MACD 状态**：DIF/DEA 是否金叉？柱状图趋势如何？是否零轴上方运行？
-9. ❓ **RSI 超买超卖**：RSI(6/12/24) 是否处于超买区(>70)或超卖区(<30)？
-10. ❓ **布林带(BOLL)**：价格位于上/中/下轨哪个位置？带宽是否收窄？是否有突破信号？
-11. ❓ **KDJ 短线买卖点**：K/D/J值是多少？是否金叉/死叉？买入强度/卖出强度各几星？
-12. ❓ **ATR 波动率**：波动等级是什么？基于ATR的止损位和止盈位建议是多少？
-
-#### 💎 筹码与资金
-13. ❓ 筹码结构是否健康？获利比例多少？筹码集中度如何？
-14. ❓ 平均成本与当前价格的关系？筹码是否松动？
-15. ❓ 市盈率/市净率估值水平如何？是否存在泡沫风险？
-
-#### 📰 消息面与风险
-16. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）
-17. ❓ 有无利好催化剂？（业绩预增、政策利好、行业景气等）
-18. ❓ 60日涨跌幅如何？中期表现是强势还是弱势？
-
-#### 🎲 综合风险评估
-19. ❓ 当前位置风险收益比如何？值得买入/加仓吗？
-20. ❓ 如果买入，具体的进场点位、止损位、止盈位建议是什么？
-21. ❓ 持仓者和空仓者分别应该采取什么策略？
-
-### 决策仪表盘要求：
-
-#### 📋 基础信息
-- **股票名称**：必须输出正确的中文全称（如"贵州茅台"而非"股票600519"）
-- **核心结论**：一句话说清该买/该卖/该等（不超过30字）
-- **信号类型**：🟢买入信号 / 🟡持有观望 / 🔴卖出信号
-
-#### 💡 决策建议
-- **持仓分类建议**：
-  - **空仓者**：具体操作建议（何时介入、分几批、每批仓位）
-  - **持仓者**：具体操作建议（继续持有、加仓、减仓、止盈）
-- **信心等级**：高/中/低，并说明理由
-
-#### 🎯 狙击点位（精确到分）
-- **理想买入点**：最佳进场价格（如回踩MA5支撑）
-- **次优买入点**：备选进场价格（如回踩MA10支撑）
-- **止损位**：明确的止损价格（跌破则离场）
-- **止盈目标**：分批止盈策略（第一目标价、第二目标价）
-- **建议仓位**：具体仓位建议（如2-3成、半仓等）
-
-#### ✅ 检查清单（每项必须标记）
-- ✅/⚠️/❌ 多头排列
-- ✅/⚠️/❌ 乖离率<5%（安全）
-- ✅/⚠️/❌ 量能配合
-- ✅/⚠️/❌ 筹码健康
-- ✅/⚠️/❌ 无重大利空
-- ✅/⚠️/❌ MACD 多头
-- ✅/⚠️/❌ RSI 安全区
-- ✅/⚠️/❌ BOLL 突破信号
-- ✅/⚠️/❌ KDJ 买入信号
-- ✅/⚠️/❌ ATR 风险可控
-
-#### 📊 全面技术分析要求
-在 `technical_analysis` 字段中，**必须包含以下所有维度的分析**：
-
-1. **趋势判断**：均线形态、趋势强度、趋势方向
-2. **MACD 分析**：DIF/DEA 数值、金叉/死叉状态、柱状图趋势、零轴位置
-3. **RSI 分析**：RSI(6/12/24) 数值、超买超卖状态、背离情况
-4. **BOLL 分析**：上轨XX元、中轨XX元、下轨XX元、当前位置XX%、带宽XX%、状态、信号
-5. **KDJ 分析**：K=XX、D=XX、J=XX、金叉/死叉状态、买入强度XX星、卖出强度XX星、信号
-6. **ATR 分析**：ATR=XX元（占股价XX%）、波动等级、止损位XX元、止盈位XX元、信号
-7. **量价分析**：量比、换手率、量能状态、量价配合情况
-8. **乖离率分析**：Bias(6/12/24) 数值、市场情绪判断
-9. **支撑压力**：关键支撑位、关键压力位
-10. **风险提示**：当前最大风险点、需要注意的信号
-
-### 📊 全面技术分析示例格式（必须严格遵循）：
-
-在 `technical_analysis` 字段中，必须按以下格式提供**完整、详细**的技术分析：
-
-```
-【趋势判断】
-当前均线排列：MA5>MA10>MA20>MA60（多头排列）/ 空头排列 / 缠绕
-趋势强度：XX/100，趋势状态：强势上升 / 震荡整理 / 弱势下跌
-乖离率：MA5乖离+X.XX%（安全/超买），MA10乖离+X.XX%，MA20乖离+X.XX%
-Bias乖离：Bias(6)=+X.XX%，Bias(12)=+X.XX%，Bias(24)=+X.XX%
-关键支撑：MA5支撑XX元，MA10支撑XX元，MA20支撑XX元
-
-【MACD指标】
-DIF=X.XXXX，DEA=X.XXXX，MACD柱=X.XXXX
-状态：金叉上行 / 死叉下行 / 零轴上方运行 / 零轴下方运行
-信号：多头强势 / 空头压制 / 即将金叉 / 背离警告
-柱状图趋势：放大 / 缩小，表明动能增强 / 减弱
-
-【RSI指标】
-RSI(6)=XX.X（短期），RSI(12)=XX.X（中期），RSI(24)=XX.X（长期）
-状态：正常区间(30-70) / 超买区(>70) / 超卖区(<30)
-信号：多头强势 / 空头压制 / 超买回调风险 / 超卖反弹机会
-背离情况：无背离 / 顶背离(卖出信号) / 底背离(买入信号)
-
-【BOLL布林带】
-上轨XX.XX元（压力位），中轨XX.XX元（支撑/压力），下轨XX.XX元（支撑位）
-当前价格位置：XX.X%（0%=下轨，50%=中轨，100%=上轨）
-带宽：XX.XX%，状态：收窄(变盘在即) / 正常 / 扩张(趋势加速)
-价格位置：运行于上轨与中轨之间 / 中轨附近 / 下轨附近
-信号：突破上轨(强势) / 回踩中轨(支撑测试) / 跌破下轨(弱势)
-
-【KDJ指标】
-K=XX.X（快线），D=XX.X（慢线），J=XX.X（超前指标）
-状态：K>D金叉多头排列 / K<D死叉空头排列 / 高位钝化 / 低位钝化
-位置：超买区(>80) / 正常区(20-80) / 超卖区(<20)
-买入强度：★★★★★ (5星) / ★★★☆☆ (3星) / ☆☆☆☆☆ (0星)
-卖出强度：★★★★★ (5星) / ★★★☆☆ (3星) / ☆☆☆☆☆ (0星)
-信号：强烈买入 / 持股待涨 / 观望 / 逢高减仓 / 强烈卖出
-
-【ATR波动率】
-ATR=X.XX元（真实波幅），占当前股价X.XX%
-波动等级：极低(<2%) / 低(2-3%) / 正常(3-5%) / 高(5-8%) / 极高(>8%)
-风控建议：
-- 止损位：XX.XX元（基于2倍ATR，当前价-2*ATR）
-- 止盈位：XX.XX元（基于3倍ATR，当前价+3*ATR）
-市场状态：波动率低，市场平静 / 波动率正常 / 波动率高，需警惕风险
-信号：波动率收缩，酝酿变盘 / 波动率扩张，趋势加速 / 波动率正常，风险可控
-
-【量价配合】
-量比：X.XX（相对5日均量），换手率：XX.XX%
-量能状态：放量突破 / 缩量回调 / 温和放量 / 地量 / 巨量
-5日量比：X.XX倍，量能趋势：递增 / 递减 / 稳定
-量价关系：量价齐升(健康) / 价涨量缩(背离) / 价跌量增(恐慌) / 价跌量缩(惜售)
-换手率分析：低于3%(冷门) / 3-7%(正常) / 7-15%(活跃) / 15-25%(高度活跃) / >25%(异常)
-
-【综合评估】
-技术面总体状态：强势上升 / 震荡整理 / 弱势下跌
-多头信号数量：X个，空头信号数量：X个
-最大风险点：乖离率过高 / 量能衰竭 / 指标背离 / 破位风险
-买入时机判断：立即买入 / 等待回调 / 观望为主 / 不宜介入
-```
-
-**⚠️ 重要提醒**：
-1. 每个指标的数值必须从表格数据中精确提取，严禁编造
-2. 每个指标的状态和信号必须基于数值进行合理判断
-3. 必须包含以上所有维度的分析，不可遗漏
-4. 分析要客观、准确、可操作，避免模糊表述
-
-请输出完整的 JSON 格式决策仪表盘。"""
+请输出完整 JSON。"""
         
         return prompt
     
@@ -1350,7 +1082,38 @@ ATR=X.XX元（真实波幅），占当前股价X.XX%
                 json_str = self._fix_json_string(json_str)
                 
                 data = json.loads(json_str)
-                
+
+                # === 关键字段验证 ===
+                critical_fields = ['sentiment_score', 'trend_prediction', 'operation_advice']
+                important_fields = ['dashboard', 'technical_analysis', 'analysis_summary', 'confidence_level']
+
+                missing_critical = [f for f in critical_fields if f not in data]
+                missing_important = [f for f in important_fields if f not in data]
+
+                if missing_critical:
+                    logger.warning(f"[{code}] AI返回缺失关键字段: {missing_critical}，使用默认值（评分可能不准确）")
+                if missing_important:
+                    logger.info(f"[{code}] AI返回缺失字段: {missing_important}")
+
+                # 验证 sentiment_score 范围
+                raw_score = data.get('sentiment_score', 50)
+                try:
+                    score_val = int(raw_score)
+                    if not (0 <= score_val <= 100):
+                        logger.warning(f"[{code}] sentiment_score={raw_score} 超出范围，裁剪到 0-100")
+                        score_val = max(0, min(100, score_val))
+                        data['sentiment_score'] = score_val
+                except (TypeError, ValueError):
+                    logger.warning(f"[{code}] sentiment_score={raw_score} 无法解析，使用默认值50")
+                    data['sentiment_score'] = 50
+
+                # 验证 dashboard.action_checklist 是否完整
+                dashboard_data = data.get('dashboard', {})
+                if dashboard_data:
+                    checklist = dashboard_data.get('action_checklist', [])
+                    if isinstance(checklist, list) and len(checklist) < 10:
+                        logger.warning(f"[{code}] action_checklist 仅 {len(checklist)} 项（预期10项）")
+
                 # 提取 dashboard 数据
                 dashboard = data.get('dashboard', None)
 
@@ -1359,7 +1122,6 @@ ATR=X.XX元（真实波幅），占当前股价X.XX%
                 if ai_stock_name and (name.startswith('股票') or name == code or 'Unknown' in name):
                     name = ai_stock_name
 
-                # 解析所有字段，使用默认值防止缺失
                 # 解析 decision_type，如果没有则根据 operation_advice 推断
                 decision_type = data.get('decision_type', '')
                 if not decision_type:

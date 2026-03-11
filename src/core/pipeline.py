@@ -16,6 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from typing import List, Dict, Any, Optional, Tuple
+from functools import lru_cache
 
 from src.config import get_config, Config
 from src.storage import get_db
@@ -32,10 +33,31 @@ from bot.models import BotMessage
 logger = logging.getLogger(__name__)
 
 
+class _TTLCache:
+    """简单的 TTL 缓存，用于日内数据去重"""
+
+    def __init__(self, ttl: int = 600):
+        self._store: Dict[str, Tuple[float, Any]] = {}
+        self._ttl = ttl
+
+    def get(self, key: str):
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        ts, val = entry
+        if time.time() - ts > self._ttl:
+            del self._store[key]
+            return None
+        return val
+
+    def set(self, key: str, value):
+        self._store[key] = (time.time(), value)
+
+
 class StockAnalysisPipeline:
     """
     股票分析主流程调度器
-    
+
     职责：
     1. 管理整个分析流程
     2. 协调数据获取、存储、搜索、分析、通知等模块
@@ -83,6 +105,9 @@ class StockAnalysisPipeline:
             serpapi_keys=self.config.serpapi_keys,
         )
         
+        # 日内数据缓存（避免同批次重复请求）
+        self._cache = _TTLCache(ttl=self.config.realtime_cache_ttl or 600)
+
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
         logger.info("已启用趋势分析器 (MA5>MA10>MA20 多头判断)")
         # 打印实时行情/筹码配置状态
@@ -168,51 +193,63 @@ class StockAnalysisPipeline:
             # 获取股票名称（优先从实时行情获取真实名称）
             stock_name = STOCK_NAME_MAP.get(code, '')
             
-            # Step 1: 获取实时行情（量比、换手率等）- 使用统一入口，自动故障切换
-            realtime_quote = None
-            try:
-                realtime_quote = self.fetcher_manager.get_realtime_quote(code)
-                if realtime_quote:
-                    # 使用实时行情返回的真实股票名称
-                    if realtime_quote.name:
-                        stock_name = realtime_quote.name
-                    # 兼容不同数据源的字段（有些数据源可能没有 volume_ratio）
-                    volume_ratio = getattr(realtime_quote, 'volume_ratio', None)
-                    turnover_rate = getattr(realtime_quote, 'turnover_rate', None)
-                    logger.info(f"[{code}] {stock_name} 实时行情: 价格={realtime_quote.price}, "
-                              f"量比={volume_ratio}, 换手率={turnover_rate}% "
-                              f"(来源: {realtime_quote.source.value if hasattr(realtime_quote, 'source') else 'unknown'})")
-                else:
-                    logger.info(f"[{code}] 实时行情获取失败或已禁用，将使用历史数据进行分析")
-            except Exception as e:
-                logger.warning(f"[{code}] 获取实时行情失败: {e}")
-            
+            # Step 1: 获取实时行情（带缓存）
+            realtime_quote = self._cache.get(f'rt:{code}')
+            if realtime_quote is None:
+                try:
+                    realtime_quote = self.fetcher_manager.get_realtime_quote(code)
+                    if realtime_quote:
+                        self._cache.set(f'rt:{code}', realtime_quote)
+                        if realtime_quote.name:
+                            stock_name = realtime_quote.name
+                        volume_ratio = getattr(realtime_quote, 'volume_ratio', None)
+                        turnover_rate = getattr(realtime_quote, 'turnover_rate', None)
+                        logger.info(f"[{code}] {stock_name} 实时行情: 价格={realtime_quote.price}, "
+                                  f"量比={volume_ratio}, 换手率={turnover_rate}% "
+                                  f"(来源: {realtime_quote.source.value if hasattr(realtime_quote, 'source') else 'unknown'})")
+                    else:
+                        logger.info(f"[{code}] 实时行情获取失败或已禁用，将使用历史数据进行分析")
+                except Exception as e:
+                    logger.warning(f"[{code}] 获取实时行情失败: {e}")
+            else:
+                if realtime_quote.name:
+                    stock_name = realtime_quote.name
+                logger.debug(f"[{code}] 实时行情命中缓存")
+
             # 如果还是没有名称，使用代码作为名称
             if not stock_name:
                 stock_name = f'股票{code}'
-            
-            # Step 2: 获取筹码分布 - 使用统一入口，带熔断保护
-            chip_data = None
-            try:
-                chip_data = self.fetcher_manager.get_chip_distribution(code)
-                if chip_data:
-                    logger.info(f"[{code}] 筹码分布: 获利比例={chip_data.profit_ratio:.1%}, "
-                              f"90%集中度={chip_data.concentration_90:.2%}")
-                else:
-                    logger.debug(f"[{code}] 筹码分布获取失败或已禁用")
-            except Exception as e:
-                logger.warning(f"[{code}] 获取筹码分布失败: {e}")
-            
-            # Step 2.5: 获取所属板块
-            board_names = None
-            try:
-                board_names = self.fetcher_manager.get_belong_board(code)
-                if board_names:
-                    logger.info(f"[{code}] 所属板块: {', '.join(board_names[:5])}")
-                else:
-                    logger.debug(f"[{code}] 未获取到板块信息")
-            except Exception as e:
-                logger.warning(f"[{code}] 获取所属板块失败: {e}")
+
+            # Step 2: 获取筹码分布（带缓存）
+            chip_data = self._cache.get(f'chip:{code}')
+            if chip_data is None:
+                try:
+                    chip_data = self.fetcher_manager.get_chip_distribution(code)
+                    if chip_data:
+                        self._cache.set(f'chip:{code}', chip_data)
+                        logger.info(f"[{code}] 筹码分布: 获利比例={chip_data.profit_ratio:.1%}, "
+                                  f"90%集中度={chip_data.concentration_90:.2%}")
+                    else:
+                        logger.debug(f"[{code}] 筹码分布获取失败或已禁用")
+                except Exception as e:
+                    logger.warning(f"[{code}] 获取筹码分布失败: {e}")
+            else:
+                logger.debug(f"[{code}] 筹码分布命中缓存")
+
+            # Step 2.5: 获取所属板块（带缓存）
+            board_names = self._cache.get(f'board:{code}')
+            if board_names is None:
+                try:
+                    board_names = self.fetcher_manager.get_belong_board(code)
+                    if board_names:
+                        self._cache.set(f'board:{code}', board_names)
+                        logger.info(f"[{code}] 所属板块: {', '.join(board_names[:5])}")
+                    else:
+                        logger.debug(f"[{code}] 未获取到板块信息")
+                except Exception as e:
+                    logger.warning(f"[{code}] 获取所属板块失败: {e}")
+            else:
+                logger.debug(f"[{code}] 板块信息命中缓存")
 
             # Step 3: 趋势分析（基于交易理念）
             trend_result: Optional[TrendAnalysisResult] = None
@@ -290,6 +327,23 @@ class StockAnalysisPipeline:
                     'yesterday': {}
                 }
             
+            # Step 5.5: 获取上次分析结论（用于保持分析连贯性）
+            try:
+                prev_analyses = self.db.get_analysis_history(code=code, days=7, limit=1)
+                if prev_analyses:
+                    prev = prev_analyses[0]
+                    context['prev_analysis'] = {
+                        'date': prev.created_at.strftime('%Y-%m-%d') if prev.created_at else '未知',
+                        'score': prev.sentiment_score,
+                        'trend': prev.trend_prediction,
+                        'advice': prev.operation_advice,
+                        'summary': (prev.analysis_summary or '')[:200],
+                    }
+                    logger.info(f"[{code}] 注入上次分析: {prev.created_at:%Y-%m-%d} "
+                              f"评分={prev.sentiment_score} 建议={prev.operation_advice}")
+            except Exception as e:
+                logger.debug(f"[{code}] 获取上次分析失败: {e}")
+
             # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、板块、股票名称）
             enhanced_context = self._enhance_context(
                 context,

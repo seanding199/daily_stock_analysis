@@ -1215,36 +1215,42 @@ class SearchService:
             ]
         
         logger.info(f"开始多维度情报搜索: {stock_name}({stock_code})")
-        
-        # 轮流使用不同的搜索引擎
-        provider_index = 0
-        
-        for dim in search_dimensions:
-            if search_count >= max_searches:
-                break
-            
-            # 选择搜索引擎（轮流使用）
-            available_providers = [p for p in self._providers if p.is_available]
-            if not available_providers:
-                break
-            
-            provider = available_providers[provider_index % len(available_providers)]
-            provider_index += 1
-            
+
+        # 限制搜索维度数量
+        dims_to_search = search_dimensions[:max_searches]
+
+        available_providers = [p for p in self._providers if p.is_available]
+        if not available_providers:
+            logger.warning("无可用搜索引擎")
+            return results
+
+        def _search_one(dim_idx_dim):
+            """单个维度的搜索任务"""
+            idx, dim = dim_idx_dim
+            provider = available_providers[idx % len(available_providers)]
             logger.info(f"[情报搜索] {dim['desc']}: 使用 {provider.name}")
-            
             response = provider.search(dim['query'], max_results=3)
-            results[dim['name']] = response
-            search_count += 1
-            
             if response.success:
                 logger.info(f"[情报搜索] {dim['desc']}: 获取 {len(response.results)} 条结果")
             else:
                 logger.warning(f"[情报搜索] {dim['desc']}: 搜索失败 - {response.error_message}")
-            
-            # 短暂延迟避免请求过快
-            time.sleep(0.5)
-        
+            return dim['name'], response
+
+        # 并发执行所有维度搜索
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=min(len(dims_to_search), 3)) as executor:
+            futures = {
+                executor.submit(_search_one, (i, dim)): dim
+                for i, dim in enumerate(dims_to_search)
+            }
+            for future in as_completed(futures):
+                try:
+                    dim_name, response = future.result(timeout=30)
+                    results[dim_name] = response
+                except Exception as e:
+                    dim = futures[future]
+                    logger.warning(f"[情报搜索] {dim['desc']}: 异常 - {e}")
+
         return results
     
     def format_intel_report(self, intel_results: Dict[str, SearchResponse], stock_name: str) -> str:
