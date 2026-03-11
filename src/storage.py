@@ -363,6 +363,69 @@ class BacktestSummary(Base):
     )
 
 
+class StockRecommendation(Base):
+    """推荐选股结果（基于技术面评分扫描）。"""
+
+    __tablename__ = 'stock_recommendations'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scan_date = Column(Date, nullable=False, index=True)
+    code = Column(String(10), nullable=False)
+    name = Column(String(50))
+
+    # 评分与信号
+    signal_score = Column(Float)                     # 技术评分 0-100
+    signal_type = Column(String(20))                 # STRONG_BUY/BUY/HOLD/...
+    trend_status = Column(String(20))                # 趋势状态
+    signal_reasons = Column(Text)                    # JSON: 买入理由列表
+    risk_factors = Column(Text)                      # JSON: 风险因素列表
+
+    # AI 评分（深度模式可选）
+    sentiment_score = Column(Float, nullable=True)
+
+    # 行情快照
+    close_price = Column(Float)
+    change_pct = Column(Float)                       # 涨跌幅
+    bias_rate = Column(Float)                        # 乖离率(MA5)
+    volume_ratio = Column(Float)                     # 量比
+
+    # 关键指标快照
+    macd_status = Column(String(30))
+    rsi_12 = Column(Float)
+    kdj_signal = Column(String(30))
+    boll_position = Column(Float)                    # BOLL 位置 0-100%
+    atr_pct = Column(Float)                          # ATR 波动率
+
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint('scan_date', 'code', name='uix_recommendation_date_code'),
+        Index('ix_recommendation_score', 'scan_date', 'signal_score'),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'code': self.code,
+            'name': self.name,
+            'scan_date': self.scan_date.isoformat() if self.scan_date else None,
+            'signal_score': self.signal_score,
+            'signal_type': self.signal_type,
+            'trend_status': self.trend_status,
+            'signal_reasons': json.loads(self.signal_reasons) if self.signal_reasons else [],
+            'risk_factors': json.loads(self.risk_factors) if self.risk_factors else [],
+            'sentiment_score': self.sentiment_score,
+            'close_price': self.close_price,
+            'change_pct': self.change_pct,
+            'bias_rate': self.bias_rate,
+            'volume_ratio': self.volume_ratio,
+            'macd_status': self.macd_status,
+            'rsi_12': self.rsi_12,
+            'kdj_signal': self.kdj_signal,
+            'boll_position': self.boll_position,
+            'atr_pct': self.atr_pct,
+        }
+
+
 class DatabaseManager:
     """
     数据库管理器 - 单例模式
@@ -1167,6 +1230,51 @@ class DatabaseManager:
         raw_key = f"{code}|{title}|{source}|{date_str}"
         digest = hashlib.md5(raw_key.encode("utf-8")).hexdigest()
         return f"no-url:{code}:{digest}"
+
+
+    # ── 推荐选股存取 ──────────────────────────────────────
+
+    def save_recommendations(self, records: List[Dict[str, Any]]) -> int:
+        """批量保存推荐结果（UPSERT by scan_date+code）"""
+        saved = 0
+        with self.get_session() as session:
+            for rec in records:
+                try:
+                    existing = session.query(StockRecommendation).filter(
+                        StockRecommendation.scan_date == rec['scan_date'],
+                        StockRecommendation.code == rec['code'],
+                    ).first()
+                    if existing:
+                        for k, v in rec.items():
+                            if k != 'id':
+                                setattr(existing, k, v)
+                    else:
+                        session.add(StockRecommendation(**rec))
+                    saved += 1
+                except Exception as e:
+                    logger.warning(f"保存推荐记录失败 {rec.get('code')}: {e}")
+            session.commit()
+        return saved
+
+    def get_recommendations(
+        self,
+        scan_date: Optional[date] = None,
+        min_score: float = 0,
+        top_n: int = 20,
+        signal_types: Optional[List[str]] = None,
+    ) -> List[StockRecommendation]:
+        """查询推荐结果"""
+        target_date = scan_date or date.today()
+        with self.get_session() as session:
+            q = session.query(StockRecommendation).filter(
+                StockRecommendation.scan_date == target_date,
+                StockRecommendation.signal_score >= min_score,
+            )
+            if signal_types:
+                q = q.filter(StockRecommendation.signal_type.in_(signal_types))
+            results = q.order_by(desc(StockRecommendation.signal_score)).limit(top_n).all()
+            session.expunge_all()
+            return results
 
 
 # 便捷函数

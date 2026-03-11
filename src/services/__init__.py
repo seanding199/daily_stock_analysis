@@ -13,6 +13,8 @@ from src.services.backtest_service import BacktestService
 from src.services.history_service import HistoryService
 from src.services.stock_service import StockService
 from src.services.task_service import TaskService, get_task_service
+from src.services.stock_pool_service import StockPoolService
+from src.services.recommendation_service import RecommendationService
 
 __all__ = [
     "AnalysisService",
@@ -21,4 +23,6 @@ __all__ = [
     "StockService",
     "TaskService",
     "get_task_service",
+    "StockPoolService",
+    "RecommendationService",
 ]
