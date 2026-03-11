@@ -344,6 +344,17 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.debug(f"[{code}] 获取上次分析失败: {e}")
 
+            # Step 5.6: 注入 AI 历史准确率（让 AI 了解自身预测表现）
+            try:
+                from src.services.accuracy_service import AccuracyService
+                acc_svc = AccuracyService(self.db)
+                acc_text = acc_svc.format_accuracy_for_prompt(code)
+                if acc_text:
+                    context['accuracy_summary'] = acc_text
+                    logger.info(f"[{code}] 注入准确率摘要: {acc_text[:60]}...")
+            except Exception as e:
+                logger.debug(f"[{code}] 获取准确率统计失败: {e}")
+
             # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、板块、股票名称）
             enhanced_context = self._enhance_context(
                 context,

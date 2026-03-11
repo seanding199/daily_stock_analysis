@@ -132,77 +132,61 @@ class NotificationService:
     def __init__(self, source_message: Optional[BotMessage] = None):
         """
         初始化通知服务
-        
-        检测所有已配置的渠道，推送时会向所有渠道发送
+
+        使用策略模式的 ChannelRegistry 管理渠道。
+        保留旧属性以兼容直接调用 send_to_xxx 的场景。
         """
         config = get_config()
         self._source_message = source_message
         self._context_channels: List[str] = []
-        
-        # 各渠道的 Webhook URL
+
+        # ── 新：策略模式渠道注册表 ──
+        from src.channels.registry import ChannelRegistry
+        self._channel_registry = ChannelRegistry(config)
+
+        # ── 旧属性保留（兼容 send_to_xxx 直接调用）──
         self._wechat_url = config.wechat_webhook_url
         self._feishu_url = getattr(config, 'feishu_webhook_url', None)
-
-        # 微信消息类型配置
         self._wechat_msg_type = getattr(config, 'wechat_msg_type', 'markdown')
-        # Telegram 配置
         self._telegram_config = {
             'bot_token': getattr(config, 'telegram_bot_token', None),
             'chat_id': getattr(config, 'telegram_chat_id', None),
             'message_thread_id': getattr(config, 'telegram_message_thread_id', None),
         }
-        
-        # 邮件配置
         self._email_config = {
             'sender': config.email_sender,
             'sender_name': getattr(config, 'email_sender_name', 'daily_stock_analysis股票分析助手'),
             'password': config.email_password,
             'receivers': config.email_receivers or ([config.email_sender] if config.email_sender else []),
         }
-        
-        # Pushover 配置
         self._pushover_config = {
             'user_key': getattr(config, 'pushover_user_key', None),
             'api_token': getattr(config, 'pushover_api_token', None),
         }
-
-        # PushPlus 配置
         self._pushplus_token = getattr(config, 'pushplus_token', None)
-       
-        # Server酱3 配置
         self._serverchan3_sendkey = getattr(config, 'serverchan3_sendkey', None)
-
-        # 自定义 Webhook 配置
         self._custom_webhook_urls = getattr(config, 'custom_webhook_urls', []) or []
         self._custom_webhook_bearer_token = getattr(config, 'custom_webhook_bearer_token', None)
-        
-        # Discord 配置
         self._discord_config = {
             'bot_token': getattr(config, 'discord_bot_token', None),
             'channel_id': getattr(config, 'discord_main_channel_id', None),
             'webhook_url': getattr(config, 'discord_webhook_url', None),
         }
-
         self._astrbot_config = {
             'astrbot_url': getattr(config, 'astrbot_url', None),
             'astrbot_token': getattr(config, 'astrbot_token', None),
         }
-        
-        # 消息长度限制（字节）
         self._feishu_max_bytes = getattr(config, 'feishu_max_bytes', 20000)
         self._wechat_max_bytes = getattr(config, 'wechat_max_bytes', 4000)
-        
-        # 检测所有已配置的渠道
+
+        # 检测所有已配置的渠道（兼容旧逻辑）
         self._available_channels = self._detect_all_channels()
         if self._has_context_channel():
             self._context_channels.append("钉钉会话")
-        
-        if not self._available_channels and not self._context_channels:
+
+        all_names = self._channel_registry.channel_names + self._context_channels
+        if not all_names:
             logger.warning("未配置有效的通知渠道，将不发送推送通知")
-        else:
-            channel_names = [ChannelDetector.get_channel_name(ch) for ch in self._available_channels]
-            channel_names.extend(self._context_channels)
-            logger.info(f"已配置 {len(channel_names)} 个通知渠道：{', '.join(channel_names)}")
     
     def _detect_all_channels(self) -> List[NotificationChannel]:
         """
@@ -3030,69 +3014,26 @@ class NotificationService:
     
     def send(self, content: str) -> bool:
         """
-        统一发送接口 - 向所有已配置的渠道发送
-        
-        遍历所有已配置的渠道，逐一发送消息
-        
+        统一发送接口 - 通过 ChannelRegistry 向所有渠道发送
+
         Args:
             content: 消息内容（Markdown 格式）
-            
+
         Returns:
             是否至少有一个渠道发送成功
         """
+        # 先发送到上下文渠道（钉钉/飞书 Stream 等）
         context_success = self.send_to_context(content)
 
-        if not self._available_channels:
-            if context_success:
-                logger.info("已通过消息上下文渠道完成推送（无其他通知渠道）")
-                return True
-            logger.warning("通知服务不可用，跳过推送")
+        # 通过策略模式分发到所有配置渠道
+        registry_success = self._channel_registry.send_all(content)
+
+        if not registry_success and not context_success:
+            if not self._channel_registry.available and not self._context_channels:
+                logger.warning("通知服务不可用，跳过推送")
             return False
-        
-        channel_names = self.get_channel_names()
-        logger.info(f"正在向 {len(self._available_channels)} 个渠道发送通知：{channel_names}")
-        
-        success_count = 0
-        fail_count = 0
-        
-        for channel in self._available_channels:
-            channel_name = ChannelDetector.get_channel_name(channel)
-            try:
-                if channel == NotificationChannel.WECHAT:
-                    result = self.send_to_wechat(content)
-                elif channel == NotificationChannel.FEISHU:
-                    result = self.send_to_feishu(content)
-                elif channel == NotificationChannel.TELEGRAM:
-                    result = self.send_to_telegram(content)
-                elif channel == NotificationChannel.EMAIL:
-                    result = self.send_to_email(content)
-                elif channel == NotificationChannel.PUSHOVER:
-                    result = self.send_to_pushover(content)
-                elif channel == NotificationChannel.PUSHPLUS:
-                    result = self.send_to_pushplus(content)
-                elif channel == NotificationChannel.SERVERCHAN3:
-                    result = self.send_to_serverchan3(content)
-                elif channel == NotificationChannel.CUSTOM:
-                    result = self.send_to_custom(content)
-                elif channel == NotificationChannel.DISCORD:
-                    result = self.send_to_discord(content)
-                elif channel == NotificationChannel.ASTRBOT:
-                    result = self.send_to_astrbot(content)
-                else:
-                    logger.warning(f"不支持的通知渠道: {channel}")
-                    result = False
-                
-                if result:
-                    success_count += 1
-                else:
-                    fail_count += 1
-                    
-            except Exception as e:
-                logger.error(f"{channel_name} 发送失败: {e}")
-                fail_count += 1
-        
-        logger.info(f"通知发送完成：成功 {success_count} 个，失败 {fail_count} 个")
-        return success_count > 0 or context_success
+
+        return True
     
     def _send_chunked_messages(self, content: str, max_length: int) -> bool:
         """

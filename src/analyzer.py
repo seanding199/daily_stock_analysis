@@ -911,6 +911,10 @@ RSI: 6日={trend.get('rsi_6', 0):.1f} 12日={trend.get('rsi_12', 0):.1f} 24日={
             boards = context['belong_board']
             prompt += f"\n所属板块: {' | '.join(boards)}\n"
 
+        # 注入 AI 历史准确率（让 AI 参考自身历史表现）
+        if 'accuracy_summary' in context:
+            prompt += f"\n{context['accuracy_summary']}\n> 请参考历史胜率，对低胜率建议类型保持谨慎。\n"
+
         # 注入上次分析结论（保持连贯性）
         if 'prev_analysis' in context:
             prev = context['prev_analysis']
