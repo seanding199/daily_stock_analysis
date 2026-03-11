@@ -42,6 +42,14 @@ class Config:
     # === 自选股配置 ===
     stock_list: List[str] = field(default_factory=list)
 
+    # === 推荐选股配置 ===
+    scan_stock_list: List[str] = field(default_factory=list)
+    scan_boards: List[str] = field(default_factory=list)
+    scan_min_score: int = 65
+    scan_top_n: int = 10
+    scan_mode: str = 'fast'
+    scan_max_workers: int = 5
+
     # === 飞书云文档配置 ===
     feishu_app_id: Optional[str] = None
     feishu_app_secret: Optional[str] = None
@@ -302,6 +310,12 @@ class Config:
         # 如果没有配置，使用默认的示例股票
         if not stock_list:
             stock_list = ['600519', '000001', '300750']
+
+        # 解析扫描池列表
+        scan_stock_str = os.getenv('SCAN_STOCK_LIST', '')
+        scan_stock_list = [c.strip() for c in scan_stock_str.split(',') if c.strip()]
+        scan_boards_str = os.getenv('SCAN_BOARDS', '')
+        scan_boards = [b.strip() for b in scan_boards_str.split(',') if b.strip()]
         
         # 解析搜索引擎 API Keys（支持多个 key，逗号分隔）
         bocha_keys_str = os.getenv('BOCHA_API_KEYS', '')
@@ -328,6 +342,12 @@ class Config:
         
         return cls(
             stock_list=stock_list,
+            scan_stock_list=scan_stock_list,
+            scan_boards=scan_boards,
+            scan_min_score=int(os.getenv('SCAN_MIN_SCORE', '65')),
+            scan_top_n=int(os.getenv('SCAN_TOP_N', '10')),
+            scan_mode=os.getenv('SCAN_MODE', 'fast'),
+            scan_max_workers=int(os.getenv('SCAN_MAX_WORKERS', '5')),
             feishu_app_id=os.getenv('FEISHU_APP_ID'),
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
