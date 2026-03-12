@@ -673,15 +673,39 @@ class AkshareFetcher(BaseFetcher):
         
         # 重命名列
         df = df.rename(columns=column_mapping)
-        
+
+        # 成交量单位校验与修正：通过成交量×收盘价与成交额对比，自动检测单位
+        # akshare 的 stock_zh_a_hist 返回的成交量可能是"手"(1手=100股)
+        if 'volume' in df.columns and 'amount' in df.columns and 'close' in df.columns:
+            try:
+                # 取最近一条有效数据做校验
+                valid_rows = df.dropna(subset=['volume', 'amount', 'close'])
+                if len(valid_rows) > 0:
+                    sample = valid_rows.iloc[-1]
+                    vol = float(sample['volume'])
+                    amt = float(sample['amount'])
+                    price = float(sample['close'])
+                    if vol > 0 and amt > 0 and price > 0:
+                        # 如果 volume 是"股"，vol * price ≈ amount
+                        # 如果 volume 是"手"，vol * 100 * price ≈ amount
+                        ratio_as_shares = (vol * price) / amt
+                        ratio_as_lots = (vol * 100 * price) / amt
+                        # 哪个更接近1.0，就是哪个单位
+                        if abs(ratio_as_lots - 1.0) < abs(ratio_as_shares - 1.0) and ratio_as_lots < 2.0:
+                            # volume 是"手"，需要转为"股"
+                            df['volume'] = df['volume'] * 100
+                            logger.debug(f"[数据标准化] {stock_code} 成交量单位检测为'手'，已转换为'股'")
+            except Exception as e:
+                logger.debug(f"[数据标准化] {stock_code} 成交量单位校验失败: {e}")
+
         # 添加股票代码列
         df['code'] = stock_code
-        
+
         # 只保留需要的列
         keep_cols = ['code'] + STANDARD_COLUMNS
         existing_cols = [col for col in keep_cols if col in df.columns]
         df = df[existing_cols]
-        
+
         return df
     
     def get_realtime_quote(self, stock_code: str, source: str = "em") -> Optional[UnifiedRealtimeQuote]:

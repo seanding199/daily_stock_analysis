@@ -343,27 +343,86 @@ class GeminiAnalyzer:
 - 乖离率 > 5%：严禁追高！直接判定为"观望"
 
 ### 2. 趋势交易（顺势而为）
-- **多头排列必须条件**：MA5 > MA10 > MA20
-- 只做多头排列的股票，空头排列坚决不碰
+- **标准多头排列**：必须严格满足 MA5 > MA10 > MA20（三条均线依次从上到下排列）
+- **弱势多头**（MA5>MA10 但 MA10≤MA20）：这不是真正的多头排列！`is_bullish` 必须为 `false`
+- **均线缠绕**（如 MA20>MA5>MA10 或各均线交叉纠缠）：属于震荡格局，不能标注为多头
+- 只做标准多头排列的股票，弱势多头最多给"持有/小仓位"
 - 均线发散上行优于均线粘合
 - 趋势强度判断：看均线间距是否在扩大
 
 ### 3. 效率优先（筹码结构）
 - 关注筹码集中度：90%集中度 < 15% 表示筹码集中
 - 获利比例分析：70-90% 获利盘时需警惕获利回吐
-- 平均成本与现价关系：现价高于平均成本 5-15% 为健康
+- **套牢盘分析**：当获利比例 < 50%，说明超半数持仓套牢，上方解套抛压极重，必须在分析中明确体现，下调目标位
+- 平均成本与现价关系：现价高于平均成本 5-15% 为健康；现价低于平均成本说明多数人亏损，上涨阻力大
 
 ### 4. 买点偏好（回踩支撑）
 - **最佳买点**：缩量回踩 MA5 获得支撑
 - **次优买点**：回踩 MA10 获得支撑
 - **观望情况**：跌破 MA20 时观望
+- **关键约束**：买入点必须 > 止损触发价（如MA20），否则买入即触发止损，逻辑自相矛盾
 
 ### 5. 风险排查重点
 - 减持公告（股东、高管减持）
-- 业绩预亏/大幅下滑
+- 业绩预亏/大幅下滑（需区分扣非净利润和归母净利润，分析非经常性损益影响）
 - 监管处罚/立案调查
 - 行业政策利空
 - 大额解禁
+
+## ⚠️ 信号冲突处理规则（必须严格执行）
+
+以下规则用于处理技术指标之间的信号冲突，必须遵守：
+
+### 规则A：超买环境下禁止给出买入建议
+- 如果 KDJ 的 J 值 > 100（极度超买），且均线不是标准多头排列（MA5>MA10>MA20），则：
+  - `operation_advice` 最多为"持有"或"观望"，**绝不能是"买入"**
+  - `signal_type` 不能为"🟢买入信号"
+- 如果 RSI 超买 + KDJ 超买（双重超买），无论其他条件如何：
+  - `operation_advice` 必须为"观望"或"减仓"
+
+### 规则B：均线非多头排列时的限制
+- 如果均线不满足 MA5>MA10>MA20（标准多头），则：
+  - `is_bullish` 必须为 `false`
+  - 检查清单"多头排列"项必须标注 ⚠️ 或 ❌（不能是 ✅）
+  - `operation_advice` 最多为"持有"，不能给"买入"或"加仓"
+
+### 规则C：买入点与止损位一致性检查
+- 理想买入点（如MA5附近）必须 > 风控减仓线（如MA20）
+- 如果 MA5 < MA20（均线非多头），则不能把 MA5 设为理想买入点
+- 止损位必须只设一个明确价格，不能出现两个矛盾的止损标准
+
+### 规则D：量能解读必须结合多空背景
+- 缩量回调 + 标准多头排列（MA5>MA10>MA20）→ 可正面解读为"洗盘"
+- 缩量回调 + 超买信号/均线缠绕/非标准多头 → 必须解读为"买盘不足、多头接力乏力"
+- **"洗盘"的前提是存在明确的上涨趋势（标准多头排列），无趋势则不存在洗盘**
+- 不允许脱离技术背景单独做正面解读
+
+### 规则E：基本面重大风险优先级
+- 当出现以下基本面风险时，技术面的微弱优势不能作为看多依据：
+  - 最近一季度净利润同比大幅下滑（>30%）
+  - 业绩预亏
+  - 重大减持/立案调查
+- 此时 `operation_advice` 最多为"观望"，并在风险警报中醒目标出
+- **业绩暴增需甄别低基数效应**：若上年同期因大额减值/非经常损益导致基数极低，当期增长不代表主营业务爆发，需对比营收增速验证
+- **业绩下滑需区分幅度和持续性**：季度净利润同比下滑>50%属于"业绩腰斩"，必须作为核心风险而非次要风险
+
+### 规则F：严禁编造未提供的技术指标
+- 只能使用输入数据中提供的技术指标（MA、MACD、RSI、KDJ、乖离率等）
+- 如果输入中没有某个指标的数据，不能自行计算或编造数值
+- 布林带(BOLL)等指标，如果输入中未提供，在检查清单中不要出现
+
+### 规则G：严禁确认偏差（先有结论再找论据）
+- **分析流程必须是：客观罗列所有信号 → 评估多空力量对比 → 得出结论**
+- 禁止先预设"买入/看多"结论，再选择性挑选有利指标
+- 当多空信号冲突时（如MACD金叉但KDJ超买），必须在结论中体现冲突和不确定性
+- 利空信号（超买、均线缠绕、业绩下滑、套牢盘压力）的权重不得低于利多信号
+- 盈亏比检查：潜在盈利/潜在亏损 < 2:1 时，不应给出买入建议
+
+### 规则H：支撑位/压力位识别规则
+- 支撑位应选择最近的**有效**支撑均线，优先级：MA20（中期趋势线）> MA10 > MA5
+- 当 MA5 < MA20 时，MA20 才是更有效的支撑位，不应把更低的 MA5 标为核心支撑
+- 压力位需考虑上方套牢盘密集区（筹码平均成本附近），获利比例<50%时平均成本即为强压力位
+- 目标位不应设在套牢密集区之上（除非有重大利好催化突破）
 
 ## 输出格式：决策仪表盘 JSON
 
@@ -391,31 +450,32 @@ class GeminiAnalyzer:
 
         "data_perspective": {
             "trend_status": {
-                "ma_alignment": "均线排列状态描述",
-                "is_bullish": true/false,
+                "ma_alignment": "均线排列状态描述（如实描述，非标准多头必须明确说明）",
+                "is_bullish": "true仅当严格满足MA5>MA10>MA20时，否则必须为false",
                 "trend_score": 0-100
             },
             "price_position": {
-                "current_price": 当前价格数值,
-                "ma5": MA5数值,
-                "ma10": MA10数值,
-                "ma20": MA20数值,
-                "bias_ma5": 乖离率百分比数值,
+                "current_price": "当前价格数值",
+                "ma5": "MA5数值",
+                "ma10": "MA10数值",
+                "ma20": "MA20数值",
+                "bias_ma5": "乖离率百分比数值",
                 "bias_status": "安全/警戒/危险",
-                "support_level": 支撑位价格,
-                "resistance_level": 压力位价格
+                "support_level": "支撑位价格（选择有效支撑位：在多头排列下取MA5，否则取最近有效均线）",
+                "resistance_level": "压力位价格"
             },
             "volume_analysis": {
-                "volume_ratio": 量比数值,
+                "volume_ratio": "量比数值",
                 "volume_status": "放量/缩量/平量",
-                "turnover_rate": 换手率百分比,
-                "volume_meaning": "量能含义解读（如：缩量回调表示抛压减轻）"
+                "turnover_rate": "换手率百分比",
+                "volume_meaning": "量能含义解读（必须结合趋势背景，参考规则D）"
             },
             "chip_structure": {
-                "profit_ratio": 获利比例,
-                "avg_cost": 平均成本,
-                "concentration": 筹码集中度,
-                "chip_health": "健康/一般/警惕"
+                "profit_ratio": "获利比例",
+                "avg_cost": "平均成本",
+                "concentration": "筹码集中度",
+                "chip_health": "健康/一般/警惕",
+                "trap_pressure": "套牢盘压力描述（获利比例<50%时必须说明上方抛压情况）"
             }
         },
 
@@ -423,28 +483,33 @@ class GeminiAnalyzer:
             "latest_news": "【最新消息】近期重要新闻摘要",
             "risk_alerts": ["风险点1：具体描述", "风险点2：具体描述"],
             "positive_catalysts": ["利好1：具体描述", "利好2：具体描述"],
-            "earnings_outlook": "业绩预期分析（基于年报预告、业绩快报等）",
+            "earnings_outlook": "业绩预期分析（需区分扣非净利润与归母净利润，分析低基数效应和非经常性损益）",
             "sentiment_summary": "舆情情绪一句话总结"
         },
 
         "battle_plan": {
             "sniper_points": {
-                "ideal_buy": "理想买入点：XX元（在MA5附近）",
+                "ideal_buy": "理想买入点：XX元（必须>止损位，且在有效支撑附近）",
                 "secondary_buy": "次优买入点：XX元（在MA10附近）",
-                "stop_loss": "止损位：XX元（跌破MA20或X%）",
-                "take_profit": "目标位：XX元（前高/整数关口）"
+                "stop_loss": "止损位：XX元（唯一明确价格，基于ATR或关键均线）",
+                "take_profit": "目标位：XX元（需考虑上方套牢盘压力）"
             },
             "position_strategy": {
                 "suggested_position": "建议仓位：X成",
                 "entry_plan": "分批建仓策略描述",
-                "risk_control": "风控策略描述"
+                "risk_control": "风控策略描述（止损位只设一个，不能自相矛盾）"
             },
             "action_checklist": [
-                "✅/⚠️/❌ 检查项1：多头排列",
-                "✅/⚠️/❌ 检查项2：乖离率<5%",
-                "✅/⚠️/❌ 检查项3：量能配合",
-                "✅/⚠️/❌ 检查项4：无重大利空",
-                "✅/⚠️/❌ 检查项5：筹码健康"
+                "✅/⚠️/❌ 检查项1：多头排列（✅仅当MA5>MA10>MA20；⚠️弱势多头MA5>MA10但MA10≤MA20；❌其他）",
+                "✅/⚠️/❌ 检查项2：乖离率<5%（✅<2%；⚠️2-5%；❌>5%）",
+                "✅/⚠️/❌ 检查项3：量能配合（结合趋势背景判断）",
+                "✅/⚠️/❌ 检查项4：无重大利空（业绩大幅下滑也算利空）",
+                "✅/⚠️/❌ 检查项5：筹码健康（获利比例<50%时必须⚠️或❌）",
+                "✅/⚠️/❌ 检查项6：MACD信号（基于输入数据）",
+                "✅/⚠️/❌ 检查项7：RSI安全区（>70超买❌；<30超卖看反弹）",
+                "✅/⚠️/❌ 检查项8：KDJ信号（J>100超买❌；J<0超卖看反弹）",
+                "✅/⚠️/❌ 检查项9：ATR风险可控（波动率是否合理）",
+                "✅/⚠️/❌ 检查项10：买卖点逻辑一致（买入点>止损位）"
             ]
         }
     },
@@ -476,36 +541,47 @@ class GeminiAnalyzer:
 ## 评分标准
 
 ### 强烈买入（80-100分）：
-- ✅ 多头排列：MA5 > MA10 > MA20
+- ✅ 标准多头排列：MA5 > MA10 > MA20（必须条件）
 - ✅ 低乖离率：<2%，最佳买点
 - ✅ 缩量回调或放量突破
 - ✅ 筹码集中健康
 - ✅ 消息面有利好催化
+- ✅ KDJ/RSI 未超买
 
 ### 买入（60-79分）：
-- ✅ 多头排列或弱势多头
+- ✅ 标准多头排列（必须条件，弱势多头不够资格）
 - ✅ 乖离率 <5%
 - ✅ 量能正常
-- ⚪ 允许一项次要条件不满足
+- ✅ KDJ 未极度超买（J<100）
+- ✅ 基本面无重大风险（近一季度净利润未大幅下滑）
+- ✅ 盈亏比 ≥ 2:1（潜在盈利/潜在亏损）
+- ⚪ 允许一项次要条件不满足（但标准多头、KDJ未超买为必须条件）
 
-### 观望（40-59分）：
+### 持有/观望（40-59分）：
+- ⚠️ 弱势多头或均线缠绕（非标准多头排列）
 - ⚠️ 乖离率 >5%（追高风险）
-- ⚠️ 均线缠绕趋势不明
+- ⚠️ KDJ/RSI 超买
 - ⚠️ 有风险事件
+- ⚠️ 基本面有不确定性（如季度业绩下滑）
 
 ### 卖出/减仓（0-39分）：
 - ❌ 空头排列
 - ❌ 跌破MA20
 - ❌ 放量下跌
-- ❌ 重大利空
+- ❌ 重大利空（业绩腰斩、减持、处罚等）
+- ❌ RSI+KDJ 双重超买
 
 ## 决策仪表盘核心原则
 
 1. **核心结论先行**：一句话说清该买该卖
 2. **分持仓建议**：空仓者和持仓者给不同建议
-3. **精确狙击点**：必须给出具体价格，不说模糊的话
-4. **检查清单可视化**：用 ✅⚠️❌ 明确显示每项检查结果
-5. **风险优先级**：舆情中的风险点要醒目标出"""
+3. **精确狙击点**：必须给出具体价格，且买入点>止损位（逻辑自洽）
+4. **检查清单可视化**：用 ✅⚠️❌ 明确显示每项检查结果，严格按照标准判定
+5. **风险优先级**：基本面重大风险 > 技术面信号，舆情中的风险点要醒目标出
+6. **信号一致性**：所有指标信号与最终结论必须逻辑一致，不能出现"超买却推荐买入"等矛盾
+7. **数据真实性**：只使用输入提供的数据，严禁编造任何技术指标数值
+8. **客观中立**：严禁确认偏差，不能先预设结论再选择性引用指标；利空信号必须与利多信号同等权重体现
+9. **盈亏比底线**：潜在盈利/潜在亏损 < 2:1 的交易不具备操作价值，不应给买入建议"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
@@ -783,8 +859,11 @@ class GeminiAnalyzer:
             result.search_performed = bool(news_context)
             result.market_snapshot = self._build_market_snapshot(context)
 
+            # 后置验证：检测并修复AI输出中的逻辑矛盾
+            result = self._validate_and_fix_result(result, context)
+
             logger.info(f"[LLM解析] {name}({code}) 分析完成: {result.trend_prediction}, 评分 {result.sentiment_score}")
-            
+
             return result
             
         except Exception as e:
@@ -898,12 +977,50 @@ class GeminiAnalyzer:
         if 'trend_analysis' in context:
             trend = context['trend_analysis']
             bias_warning = "🚨 超过5%，严禁追高！" if trend.get('bias_ma5', 0) > 5 else "✅ 安全范围"
+
+            # 均线排列严格判定
+            ma5_val = trend.get('ma5', today.get('ma5', 0))
+            ma10_val = trend.get('ma10', today.get('ma10', 0))
+            ma20_val = trend.get('ma20', today.get('ma20', 0))
+            try:
+                ma5_f, ma10_f, ma20_f = float(ma5_val or 0), float(ma10_val or 0), float(ma20_val or 0)
+                if ma5_f > ma10_f > ma20_f and ma20_f > 0:
+                    ma_verdict = "✅ 标准多头排列 MA5>MA10>MA20"
+                    is_strict_bull = True
+                elif ma5_f > ma10_f and ma10_f <= ma20_f:
+                    ma_verdict = "⚠️ 弱势多头（MA5>MA10但MA10≤MA20），非标准多头排列，is_bullish应为false"
+                    is_strict_bull = False
+                elif ma5_f < ma10_f < ma20_f and ma5_f > 0:
+                    ma_verdict = "❌ 空头排列 MA5<MA10<MA20"
+                    is_strict_bull = False
+                else:
+                    ma_verdict = "⚠️ 均线缠绕/震荡格局，is_bullish应为false"
+                    is_strict_bull = False
+            except (TypeError, ValueError):
+                ma_verdict = "数据异常"
+                is_strict_bull = False
+
+            # KDJ 数据
+            kdj_k = trend.get('kdj_k', 'N/A')
+            kdj_d = trend.get('kdj_d', 'N/A')
+            kdj_j = trend.get('kdj_j', 'N/A')
+            kdj_status = trend.get('kdj_status', '未知')
+            kdj_signal = trend.get('kdj_signal', '')
+
+            # 超买警告
+            kdj_overbought = False
+            try:
+                if float(kdj_j) > 100:
+                    kdj_overbought = True
+            except (TypeError, ValueError):
+                pass
+
             prompt += f"""
 ### 趋势分析预判（基于交易理念）
 | 指标 | 数值 | 判定 |
 |------|------|------|
 | 趋势状态 | {trend.get('trend_status', '未知')} | |
-| 均线排列 | {trend.get('ma_alignment', '未知')} | MA5>MA10>MA20为多头 |
+| 均线排列 | {trend.get('ma_alignment', '未知')} | **{ma_verdict}** |
 | 趋势强度 | {trend.get('trend_strength', 0)}/100 | |
 | **乖离率(MA5)** | **{trend.get('bias_ma5', 0):+.2f}%** | {bias_warning} |
 | 乖离率(MA10) | {trend.get('bias_ma10', 0):+.2f}% | |
@@ -912,7 +1029,9 @@ class GeminiAnalyzer:
 | Bias(12) | {trend.get('bias_12', 0):+.2f}% | 中期乖离 |
 | Bias(24) | {trend.get('bias_24', 0):+.2f}% | 长期乖离 |
 | 量能状态 | {trend.get('volume_status', '未知')} | {trend.get('volume_trend', '')} |
-| 5日量比 | {trend.get('volume_ratio_5d', 0):.2f} | 相对5日均量 |
+| **MACD** | DIF={trend.get('macd_dif', 0):.4f} DEA={trend.get('macd_dea', 0):.4f} | {trend.get('macd_status', '')} {trend.get('macd_signal', '')} |
+| **RSI** | RSI(6)={trend.get('rsi_6', 0):.1f} RSI(12)={trend.get('rsi_12', 0):.1f} RSI(24)={trend.get('rsi_24', 0):.1f} | {trend.get('rsi_status', '')} {trend.get('rsi_signal', '')} |
+| **KDJ** | K={kdj_k} D={kdj_d} J={kdj_j} | {kdj_status} {kdj_signal} |
 | 系统信号 | {trend.get('buy_signal', '未知')} | |
 | 系统评分 | {trend.get('signal_score', 0)}/100 | |
 | **支撑位(MA5)** | **{trend.get('support_ma5', 'N/A')} 元** | 短期关键支撑 |
@@ -991,6 +1110,22 @@ class GeminiAnalyzer:
 **风险因素**：
 {chr(10).join('- ' + r for r in trend.get('risk_factors', ['无'])) if trend.get('risk_factors') else '- 无'}
 """
+            # 添加信号冲突预警
+            conflict_warnings = []
+            if kdj_overbought and not is_strict_bull:
+                conflict_warnings.append("🚨 KDJ极度超买(J>100) + 非标准多头排列 → 根据规则A，operation_advice最多为'持有'或'观望'")
+            if kdj_overbought:
+                conflict_warnings.append(f"⚠️ KDJ超买(J={kdj_j})，短线有回调风险，不宜给出'买入'建议")
+            try:
+                if float(ma5_f) < float(ma20_f) and ma20_f > 0:
+                    conflict_warnings.append(f"🚨 MA5({ma5_f:.2f}) < MA20({ma20_f:.2f})，买入点不能设在MA5附近（会低于MA20风控线），参考规则C")
+            except (TypeError, ValueError):
+                pass
+
+            if conflict_warnings:
+                prompt += "\n#### ⚠️ 信号冲突预警（AI必须遵守）\n"
+                for w in conflict_warnings:
+                    prompt += f"- {w}\n"
         
         # 添加昨日对比数据
         if 'yesterday' in context:
@@ -1314,6 +1449,275 @@ ATR=X.XX元（真实波幅），占当前股价X.XX%
             })
 
         return snapshot
+
+    def _validate_and_fix_result(
+        self,
+        result: AnalysisResult,
+        context: Dict[str, Any]
+    ) -> AnalysisResult:
+        """
+        后置验证：检测并修复 AI 输出中的逻辑矛盾
+
+        检测规则：
+        1. 均线非标准多头排列时，不能给买入建议
+        2. KDJ/RSI 超买时，不能给买入建议
+        3. 买入点必须 > 止损位
+        4. is_bullish 必须与实际均线排列一致
+        """
+        if not result.dashboard:
+            return result
+
+        trend_data = context.get('trend_analysis', {})
+        fixes_applied = []
+
+        # === 检查1：均线排列与 is_bullish 一致性 ===
+        data_perspective = result.dashboard.get('data_perspective', {})
+        trend_status = data_perspective.get('trend_status', {})
+        price_position = data_perspective.get('price_position', {})
+
+        try:
+            ma5 = float(price_position.get('ma5', 0) or trend_data.get('ma5', 0))
+            ma10 = float(price_position.get('ma10', 0) or trend_data.get('ma10', 0))
+            ma20 = float(price_position.get('ma20', 0) or trend_data.get('ma20', 0))
+        except (TypeError, ValueError):
+            ma5 = ma10 = ma20 = 0
+
+        is_strict_bull = ma5 > ma10 > ma20 > 0
+
+        # 修复 is_bullish
+        if trend_status.get('is_bullish') is True and not is_strict_bull:
+            trend_status['is_bullish'] = False
+            fixes_applied.append(f"修正is_bullish: MA5={ma5:.2f} MA10={ma10:.2f} MA20={ma20:.2f}，非标准多头排列")
+
+        # === 检查1b：非标准多头排列时，operation_advice 最多为"持有"（规则B）===
+        buy_advices = ['买入', '加仓', '强烈买入']
+
+        if not is_strict_bull and result.operation_advice in buy_advices:
+            result.operation_advice = '持有'
+            result.decision_type = 'hold'
+            if result.sentiment_score > 59:
+                result.sentiment_score = 55
+            fixes_applied.append(
+                f"非标准多头排列(MA5={ma5:.2f} MA10={ma10:.2f} MA20={ma20:.2f})，"
+                f"买入建议降级为持有"
+            )
+            core = result.dashboard.get('core_conclusion', {})
+            if core:
+                core['signal_type'] = '🟡持有观望'
+            # 修正检查清单中的多头排列项
+            action_checklist = result.dashboard.get('battle_plan', {}).get('action_checklist', [])
+            for i, item in enumerate(action_checklist):
+                if '多头排列' in str(item) and '✅' in str(item):
+                    action_checklist[i] = item.replace('✅', '⚠️' if ma5 > ma10 else '❌')
+                    fixes_applied.append("修正检查清单：多头排列项不应为✅")
+
+        # === 检查2：超买环境下不能给买入建议 ===
+        kdj_j = float(trend_data.get('kdj_j', 50))
+        rsi_status = trend_data.get('rsi_status', '')
+        kdj_overbought = kdj_j > 100
+        rsi_overbought = rsi_status in ['超买', 'OVERBOUGHT']
+
+        # 规则A：KDJ极度超买(J>100)，无论是否多头，最多"持有"
+        if kdj_overbought and result.operation_advice in buy_advices:
+            result.operation_advice = '持有' if is_strict_bull else '观望'
+            result.decision_type = 'hold'
+            if not is_strict_bull:
+                result.trend_prediction = '震荡'
+            if result.sentiment_score > 59:
+                result.sentiment_score = 55
+            fixes_applied.append(
+                f"KDJ极度超买(J={kdj_j:.1f})，短线回调风险高，"
+                f"{'标准多头降级为持有' if is_strict_bull else '非标准多头降级为观望'}"
+            )
+            core = result.dashboard.get('core_conclusion', {})
+            if core:
+                core['signal_type'] = '🟡持有观望' if is_strict_bull else '⚠️风险警告'
+
+        # RSI+KDJ双重超买：无论其他条件，强制"观望"或"减仓"
+        if kdj_overbought and rsi_overbought:
+            if result.operation_advice in buy_advices + ['持有']:
+                result.operation_advice = '观望'
+                result.decision_type = 'hold'
+                result.trend_prediction = '看空' if result.sentiment_score < 45 else '震荡'
+                if result.sentiment_score > 50:
+                    result.sentiment_score = 45
+                fixes_applied.append(f"RSI+KDJ双重超买，强制降级为观望")
+                core = result.dashboard.get('core_conclusion', {})
+                if core:
+                    core['signal_type'] = '⚠️风险警告'
+
+        # === 检查3：买入点与止损位一致性 ===
+        battle_plan = result.dashboard.get('battle_plan', {})
+        sniper_points = battle_plan.get('sniper_points', {})
+
+        def _extract_price(text: str) -> float:
+            """从文本中提取价格数值"""
+            import re
+            if not text:
+                return 0
+            match = re.search(r'(\d+\.?\d*)\s*元', str(text))
+            return float(match.group(1)) if match else 0
+
+        ideal_buy_price = _extract_price(sniper_points.get('ideal_buy', ''))
+        stop_loss_price = _extract_price(sniper_points.get('stop_loss', ''))
+
+        if ideal_buy_price > 0 and stop_loss_price > 0 and ideal_buy_price < stop_loss_price:
+            fixes_applied.append(
+                f"买入点({ideal_buy_price:.2f}) < 止损位({stop_loss_price:.2f})，逻辑矛盾！"
+                f"强制降级为观望"
+            )
+            # 买入点<止损位是致命逻辑错误，必须强制降级（而非仅警告）
+            result.operation_advice = '观望'
+            result.decision_type = 'hold'
+            if result.sentiment_score > 50:
+                result.sentiment_score = 45
+            core = result.dashboard.get('core_conclusion', {})
+            if core:
+                core['signal_type'] = '⚠️风险警告'
+            # 添加风险警告
+            risk_alerts = result.dashboard.get('intelligence', {}).get('risk_alerts', [])
+            risk_alerts.append(
+                f"⚠️ 系统检测：理想买入点({ideal_buy_price}元)低于止损位({stop_loss_price}元)，"
+                f"交易逻辑自相矛盾，买入即触发止损，本次建议无法执行"
+            )
+
+        # 检查买入点是否低于MA20（风控线）
+        if ideal_buy_price > 0 and ma20 > 0 and ideal_buy_price < ma20 and not is_strict_bull:
+            fixes_applied.append(
+                f"买入点({ideal_buy_price:.2f}) < MA20({ma20:.2f})，均线非多头时买入即触发风控，强制降级"
+            )
+            result.operation_advice = '观望'
+            result.decision_type = 'hold'
+            core = result.dashboard.get('core_conclusion', {})
+            if core:
+                core['signal_type'] = '⚠️风险警告'
+            risk_alerts = result.dashboard.get('intelligence', {}).get('risk_alerts', [])
+            risk_alerts.append(
+                f"⚠️ 系统检测：买入点({ideal_buy_price}元)低于MA20风控线({ma20:.2f}元)，"
+                f"买入即触发减仓/离场条件，建议无法执行"
+            )
+
+        # === 检查4：成交量与成交额交叉校验 ===
+        today = context.get('today', {})
+        current_price = float(price_position.get('current_price', 0) or today.get('close', 0) or 0)
+        raw_volume = today.get('volume', 0) or 0
+        raw_amount = today.get('amount', 0) or 0
+        if current_price > 0 and raw_volume > 0 and raw_amount > 0:
+            expected_amount = raw_volume * current_price
+            ratio = raw_amount / expected_amount if expected_amount > 0 else 0
+            # 如果成交额/预期成交额偏差超过10倍，说明单位有问题
+            if ratio > 10 or (ratio > 0 and ratio < 0.1):
+                fixes_applied.append(
+                    f"成交量/成交额单位疑似不一致: volume={raw_volume}, amount={raw_amount}, "
+                    f"price={current_price}, 预期amount={expected_amount:.0f}, 实际偏差{ratio:.1f}倍"
+                )
+                risk_alerts = result.dashboard.get('intelligence', {}).get('risk_alerts', [])
+                risk_alerts.append("⚠️ 系统检测：成交量与成交额数据可能存在单位不一致，请以实际行情软件数据为准")
+
+        # === 检查5：筹码压力检查（获利比例<50%时限制目标位）===
+        chip_structure = data_perspective.get('chip_structure', {})
+        try:
+            profit_ratio_str = str(chip_structure.get('profit_ratio', '100'))
+            # 支持 "41.6%" 或 "0.416" 或 "41.6" 等格式
+            profit_ratio_val = float(profit_ratio_str.replace('%', ''))
+            if profit_ratio_val < 1:  # 如果是小数形式如 0.416
+                profit_ratio_val *= 100
+        except (TypeError, ValueError):
+            profit_ratio_val = 100  # 默认不触发
+
+        if profit_ratio_val < 50:
+            avg_cost_str = str(chip_structure.get('avg_cost', '0'))
+            try:
+                avg_cost_val = float(avg_cost_str.replace('元', '').strip())
+            except (TypeError, ValueError):
+                avg_cost_val = 0
+
+            take_profit_price = _extract_price(sniper_points.get('take_profit', ''))
+            # 目标位不应超过平均成本太多（超半数套牢时，解套抛压巨大）
+            if take_profit_price > 0 and avg_cost_val > 0 and take_profit_price > avg_cost_val:
+                fixes_applied.append(
+                    f"获利比例仅{profit_ratio_val:.1f}%，超半数持仓套牢，"
+                    f"目标位{take_profit_price:.2f}元超过平均成本{avg_cost_val:.2f}元，"
+                    f"上方解套抛压极重"
+                )
+                risk_alerts = result.dashboard.get('intelligence', {}).get('risk_alerts', [])
+                risk_alerts.append(
+                    f"⚠️ 获利比例仅{profit_ratio_val:.1f}%，{100-profit_ratio_val:.1f}%持仓套牢，"
+                    f"平均成本{avg_cost_val:.2f}元附近将面临极强解套抛压，"
+                    f"目标位{take_profit_price:.2f}元需谨慎看待"
+                )
+                # 套牢盘压力下不应给买入建议
+                if result.operation_advice in buy_advices:
+                    result.operation_advice = '观望'
+                    result.decision_type = 'hold'
+                    if result.sentiment_score > 50:
+                        result.sentiment_score = 45
+                    fixes_applied.append("超半数持仓套牢+买入建议，强制降级为观望")
+
+            # 确保 trap_pressure 字段有内容
+            if not chip_structure.get('trap_pressure') or chip_structure.get('trap_pressure') == '':
+                chip_structure['trap_pressure'] = (
+                    f"获利比例仅{profit_ratio_val:.1f}%，多数持仓套牢，上涨阻力大"
+                )
+
+        # === 检查6：基本面重大风险优先级（规则E）===
+        # 扫描AI自身输出的risk_alerts和earnings_outlook，检测是否存在重大基本面风险
+        intelligence = result.dashboard.get('intelligence', {})
+        risk_alerts_text = ' '.join(str(a) for a in intelligence.get('risk_alerts', []))
+        earnings_text = str(intelligence.get('earnings_outlook', ''))
+        fundamental_text = str(result.fundamental_analysis or '')
+        all_risk_text = f"{risk_alerts_text} {earnings_text} {fundamental_text}"
+
+        # 检测重大基本面风险关键词
+        import re
+        major_risk_patterns = [
+            r'净利润.*同比.*下滑.*(?:5\d|6\d|7\d|8\d|9\d|\d{3,})%',  # 净利润同比下滑>=50%
+            r'(?:净利润|扣非).*(?:腰斩|大幅下滑|暴跌)',
+            r'业绩预亏',
+            r'立案调查',
+            r'(?:重大|大额).*减持',
+        ]
+        found_major_risks = []
+        for pattern in major_risk_patterns:
+            if re.search(pattern, all_risk_text):
+                found_major_risks.append(pattern)
+
+        if found_major_risks and result.operation_advice in buy_advices:
+            result.operation_advice = '观望'
+            result.decision_type = 'hold'
+            if result.sentiment_score > 50:
+                result.sentiment_score = 45
+            fixes_applied.append(
+                f"基本面存在重大风险信号(规则E)，技术面买入建议降级为观望"
+            )
+            core = result.dashboard.get('core_conclusion', {})
+            if core:
+                core['signal_type'] = '⚠️风险警告'
+
+        # === 检查7：量能解读一致性（规则D）===
+        volume_analysis = data_perspective.get('volume_analysis', {})
+        volume_meaning = str(volume_analysis.get('volume_meaning', ''))
+        volume_status = str(volume_analysis.get('volume_status', ''))
+        # 缩量 + 非标准多头 + 正面解读（洗盘）→ 需要修正
+        if ('缩量' in volume_status or '缩量' in volume_meaning) and not is_strict_bull:
+            positive_volume_keywords = ['洗盘', '抛压轻', '惜售', '底部放量']
+            if any(kw in volume_meaning for kw in positive_volume_keywords):
+                fixes_applied.append(
+                    f"缩量+非标准多头却正面解读为'{volume_meaning}'，"
+                    f"修正为客观解读(规则D)"
+                )
+                volume_analysis['volume_meaning'] = (
+                    f"缩量（非标准多头趋势下），买盘动能不足，多头接力乏力，"
+                    f"不宜正面解读为洗盘"
+                )
+
+        # 记录修复日志
+        if fixes_applied:
+            logger.warning(f"[后置验证] {result.name}({result.code}) 发现 {len(fixes_applied)} 处逻辑矛盾并修正:")
+            for fix in fixes_applied:
+                logger.warning(f"  - {fix}")
+
+        return result
 
     def _parse_response(
         self, 

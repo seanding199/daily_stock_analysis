@@ -436,16 +436,33 @@ class EfinanceFetcher(BaseFetcher):
         if 'amount' not in df.columns:
             df['amount'] = 0
 
-        
+        # 成交量单位校验与修正：通过成交量×收盘价与成交额对比，自动检测单位
+        if 'volume' in df.columns and 'amount' in df.columns and 'close' in df.columns:
+            try:
+                valid_rows = df.dropna(subset=['volume', 'amount', 'close'])
+                if len(valid_rows) > 0:
+                    sample = valid_rows.iloc[-1]
+                    vol = float(sample['volume'])
+                    amt = float(sample['amount'])
+                    price = float(sample['close'])
+                    if vol > 0 and amt > 0 and price > 0:
+                        ratio_as_shares = (vol * price) / amt
+                        ratio_as_lots = (vol * 100 * price) / amt
+                        if abs(ratio_as_lots - 1.0) < abs(ratio_as_shares - 1.0) and ratio_as_lots < 2.0:
+                            df['volume'] = df['volume'] * 100
+                            logger.debug(f"[数据标准化] {stock_code} 成交量单位检测为'手'，已转换为'股'")
+            except Exception as e:
+                logger.debug(f"[数据标准化] {stock_code} 成交量单位校验失败: {e}")
+
         # 如果没有 code 列，手动添加
         if 'code' not in df.columns:
             df['code'] = stock_code
-        
+
         # 只保留需要的列
         keep_cols = ['code'] + STANDARD_COLUMNS
         existing_cols = [col for col in keep_cols if col in df.columns]
         df = df[existing_cols]
-        
+
         return df
     
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
