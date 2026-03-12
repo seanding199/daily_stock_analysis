@@ -585,43 +585,24 @@ class GeminiAnalyzer:
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        初始化 AI 分析器
-
-        优先级：Gemini > OpenAI 兼容 API
+        初始化 AI 分析器（OpenAI 兼容 API）
 
         Args:
-            api_key: Gemini API Key（可选，默认从配置读取）
+            api_key: 已废弃，保留参数兼容性，实际从配置读取 OpenAI API Key
         """
-        config = get_config()
-        self._api_key = api_key or config.gemini_api_key
         self._model = None
         self._current_model_name = None  # 当前使用的模型名称
-        self._using_fallback = False  # 是否正在使用备选模型
         self._use_openai = False  # 是否使用 OpenAI 兼容 API
         self._openai_client = None  # OpenAI 客户端
 
-        # 检查 Gemini API Key 是否有效（过滤占位符）
-        gemini_key_valid = self._api_key and not self._api_key.startswith('your_') and len(self._api_key) > 10
+        self._init_openai()
 
-        # 优先尝试初始化 Gemini
-        if gemini_key_valid:
-            try:
-                self._init_model()
-            except Exception as e:
-                logger.warning(f"Gemini 初始化失败: {e}，尝试 OpenAI 兼容 API")
-                self._init_openai_fallback()
-        else:
-            # Gemini Key 未配置，尝试 OpenAI
-            logger.info("Gemini API Key 未配置，尝试使用 OpenAI 兼容 API")
-            self._init_openai_fallback()
+        if not self._openai_client:
+            logger.warning("未配置 OpenAI API Key，AI 分析功能将不可用")
 
-        # 两者都未配置
-        if not self._model and not self._openai_client:
-            logger.warning("未配置任何 AI API Key，AI 分析功能将不可用")
-
-    def _init_openai_fallback(self) -> None:
+    def _init_openai(self) -> None:
         """
-        初始化 OpenAI 兼容 API 作为备选
+        初始化 OpenAI 兼容 API
 
         支持所有 OpenAI 格式的 API，包括：
         - OpenAI 官方
@@ -672,80 +653,9 @@ class GeminiAnalyzer:
             else:
                 logger.error(f"OpenAI 兼容 API 初始化失败: {e}")
 
-    def _init_model(self) -> None:
-        """
-        初始化 Gemini 模型
-
-        配置：
-        - 使用 gemini-3-flash-preview 或 gemini-2.5-flash 模型
-        - 不启用 Google Search（使用外部 Tavily/SerpAPI 搜索）
-        """
-        try:
-            import google.generativeai as genai
-
-            # 配置 API Key
-            genai.configure(api_key=self._api_key)
-
-            # 从配置获取模型名称
-            config = get_config()
-            model_name = config.gemini_model
-            fallback_model = config.gemini_model_fallback
-
-            # 不再使用 Google Search Grounding（已知有兼容性问题）
-            # 改为使用外部搜索服务（Tavily/SerpAPI）预先获取新闻
-
-            # 尝试初始化主模型
-            try:
-                self._model = genai.GenerativeModel(
-                    model_name=model_name,
-                    system_instruction=self.SYSTEM_PROMPT,
-                )
-                self._current_model_name = model_name
-                self._using_fallback = False
-                logger.info(f"Gemini 模型初始化成功 (模型: {model_name})")
-            except Exception as model_error:
-                # 尝试备选模型
-                logger.warning(f"主模型 {model_name} 初始化失败: {model_error}，尝试备选模型 {fallback_model}")
-                self._model = genai.GenerativeModel(
-                    model_name=fallback_model,
-                    system_instruction=self.SYSTEM_PROMPT,
-                )
-                self._current_model_name = fallback_model
-                self._using_fallback = True
-                logger.info(f"Gemini 备选模型初始化成功 (模型: {fallback_model})")
-
-        except Exception as e:
-            logger.error(f"Gemini 模型初始化失败: {e}")
-            self._model = None
-
-    def _switch_to_fallback_model(self) -> bool:
-        """
-        切换到备选模型
-
-        Returns:
-            是否成功切换
-        """
-        try:
-            import google.generativeai as genai
-            config = get_config()
-            fallback_model = config.gemini_model_fallback
-
-            logger.warning(f"[LLM] 切换到备选模型: {fallback_model}")
-            self._model = genai.GenerativeModel(
-                model_name=fallback_model,
-                system_instruction=self.SYSTEM_PROMPT,
-            )
-            self._current_model_name = fallback_model
-            self._using_fallback = True
-            logger.info(f"[LLM] 备选模型 {fallback_model} 初始化成功")
-            return True
-        except Exception as e:
-            logger.error(f"[LLM] 切换备选模型失败: {e}")
-            return False
-
     def is_available(self) -> bool:
         """检查分析器是否可用"""
-        return self._model is not None or self._openai_client is not None
+        return self._openai_client is not None
 
     def _call_openai_api(self, prompt: str, generation_config: dict) -> str:
         """
@@ -759,8 +669,8 @@ class GeminiAnalyzer:
             响应文本
         """
         config = get_config()
-        max_retries = config.gemini_max_retries
-        base_delay = config.gemini_retry_delay
+        max_retries = config.ai_max_retries
+        base_delay = config.ai_retry_delay
 
         def _build_base_request_kwargs() -> dict:
             kwargs = {
@@ -834,95 +744,16 @@ class GeminiAnalyzer:
     
     def _call_api_with_retry(self, prompt: str, generation_config: dict) -> str:
         """
-        调用 AI API，带有重试和模型切换机制
-        
-        优先级：Gemini > Gemini 备选模型 > OpenAI 兼容 API
-        
-        处理 429 限流错误：
-        1. 先指数退避重试
-        2. 多次失败后切换到备选模型
-        3. Gemini 完全失败后尝试 OpenAI
-        
+        调用 AI API，带有重试机制
+
         Args:
             prompt: 提示词
             generation_config: 生成配置
-            
+
         Returns:
             响应文本
         """
-        # 如果已经在使用 OpenAI 模式，直接调用 OpenAI
-        if self._use_openai:
-            return self._call_openai_api(prompt, generation_config)
-        
-        config = get_config()
-        max_retries = config.gemini_max_retries
-        base_delay = config.gemini_retry_delay
-        
-        last_error = None
-        tried_fallback = getattr(self, '_using_fallback', False)
-        
-        for attempt in range(max_retries):
-            try:
-                # 请求前增加延时（防止请求过快触发限流）
-                if attempt > 0:
-                    delay = base_delay * (2 ** (attempt - 1))  # 指数退避: 5, 10, 20, 40...
-                    delay = min(delay, 60)  # 最大60秒
-                    logger.info(f"[Gemini] 第 {attempt + 1} 次重试，等待 {delay:.1f} 秒...")
-                    time.sleep(delay)
-                
-                response = self._model.generate_content(
-                    prompt,
-                    generation_config=generation_config,
-                    request_options={"timeout": 120}
-                )
-                
-                if response and response.text:
-                    return response.text
-                else:
-                    raise ValueError("Gemini 返回空响应")
-                    
-            except Exception as e:
-                last_error = e
-                error_str = str(e)
-                
-                # 检查是否是 429 限流错误
-                is_rate_limit = '429' in error_str or 'quota' in error_str.lower() or 'rate' in error_str.lower()
-                
-                if is_rate_limit:
-                    logger.warning(f"[Gemini] API 限流 (429)，第 {attempt + 1}/{max_retries} 次尝试: {error_str[:100]}")
-                    
-                    # 如果已经重试了一半次数且还没切换过备选模型，尝试切换
-                    if attempt >= max_retries // 2 and not tried_fallback:
-                        if self._switch_to_fallback_model():
-                            tried_fallback = True
-                            logger.info("[Gemini] 已切换到备选模型，继续重试")
-                        else:
-                            logger.warning("[Gemini] 切换备选模型失败，继续使用当前模型重试")
-                else:
-                    # 非限流错误，记录并继续重试
-                    logger.warning(f"[Gemini] API 调用失败，第 {attempt + 1}/{max_retries} 次尝试: {error_str[:100]}")
-        
-        # Gemini 所有重试都失败，尝试 OpenAI 兼容 API
-        if self._openai_client:
-            logger.warning("[Gemini] 所有重试失败，切换到 OpenAI 兼容 API")
-            try:
-                return self._call_openai_api(prompt, generation_config)
-            except Exception as openai_error:
-                logger.error(f"[OpenAI] 备选 API 也失败: {openai_error}")
-                raise last_error or openai_error
-        elif config.openai_api_key and config.openai_base_url:
-            # 尝试懒加载初始化 OpenAI
-            logger.warning("[Gemini] 所有重试失败，尝试初始化 OpenAI 兼容 API")
-            self._init_openai_fallback()
-            if self._openai_client:
-                try:
-                    return self._call_openai_api(prompt, generation_config)
-                except Exception as openai_error:
-                    logger.error(f"[OpenAI] 备选 API 也失败: {openai_error}")
-                    raise last_error or openai_error
-        
-        # 所有方式都失败
-        raise last_error or Exception("所有 AI API 调用失败，已达最大重试次数")
+        return self._call_openai_api(prompt, generation_config)
     
     def analyze(
         self, 
@@ -949,7 +780,7 @@ class GeminiAnalyzer:
         config = get_config()
         
         # 请求前增加延时（防止连续请求触发限流）
-        request_delay = config.gemini_request_delay
+        request_delay = config.ai_request_delay
         if request_delay > 0:
             logger.debug(f"[LLM] 请求前等待 {request_delay:.1f} 秒...")
             time.sleep(request_delay)
@@ -974,9 +805,9 @@ class GeminiAnalyzer:
                 operation_advice='持有',
                 confidence_level='低',
                 analysis_summary='AI 分析功能未启用（未配置 API Key）',
-                risk_warning='请配置 Gemini API Key 后重试',
+                risk_warning='请配置 OpenAI API Key 后重试',
                 success=False,
-                error_message='Gemini API Key 未配置',
+                error_message='OpenAI API Key 未配置',
             )
         
         try:
@@ -1003,13 +834,11 @@ class GeminiAnalyzer:
             # 设置生成配置（从配置文件读取温度参数）
             config = get_config()
             generation_config = {
-                "temperature": config.gemini_temperature,
+                "temperature": config.openai_temperature,
                 "max_output_tokens": 8192,
             }
 
-            # 根据实际使用的 API 显示日志
-            api_provider = "OpenAI" if self._use_openai else "Gemini"
-            logger.info(f"[LLM调用] 开始调用 {api_provider} API...")
+            logger.info("[LLM调用] 开始调用 OpenAI API...")
             
             # 使用带重试的 API 调用
             start_time = time.time()
@@ -1017,12 +846,12 @@ class GeminiAnalyzer:
             elapsed = time.time() - start_time
 
             # 记录响应信息
-            logger.info(f"[LLM返回] {api_provider} API 响应成功, 耗时 {elapsed:.2f}s, 响应长度 {len(response_text)} 字符")
+            logger.info(f"[LLM返回] OpenAI API 响应成功, 耗时 {elapsed:.2f}s, 响应长度 {len(response_text)} 字符")
             
             # 记录响应预览（INFO级别）和完整响应（DEBUG级别）
             response_preview = response_text[:300] + "..." if len(response_text) > 300 else response_text
             logger.info(f"[LLM返回 预览]\n{response_preview}")
-            logger.debug(f"=== {api_provider} 完整响应 ({len(response_text)}字符) ===\n{response_text}\n=== End Response ===")
+            logger.debug(f"=== OpenAI 完整响应 ({len(response_text)}字符) ===\n{response_text}\n=== End Response ===")
             
             # 解析响应
             result = self._parse_response(response_text, code, name)
@@ -1108,6 +937,7 @@ class GeminiAnalyzer:
 | MA5 | {today.get('ma5', 'N/A')} | 短期趋势线 |
 | MA10 | {today.get('ma10', 'N/A')} | 中短期趋势线 |
 | MA20 | {today.get('ma20', 'N/A')} | 中期趋势线 |
+| MA60 | {today.get('ma60', 'N/A')} | 长期趋势线 |
 | 均线形态 | {context.get('ma_status', '未知')} | 多头/空头/缠绕 |
 """
         
@@ -1194,13 +1024,85 @@ class GeminiAnalyzer:
 | 趋势强度 | {trend.get('trend_strength', 0)}/100 | |
 | **乖离率(MA5)** | **{trend.get('bias_ma5', 0):+.2f}%** | {bias_warning} |
 | 乖离率(MA10) | {trend.get('bias_ma10', 0):+.2f}% | |
+| 乖离率(MA20) | {trend.get('bias_ma20', 0):+.2f}% | |
+| Bias(6) | {trend.get('bias_6', 0):+.2f}% | 短期乖离 |
+| Bias(12) | {trend.get('bias_12', 0):+.2f}% | 中期乖离 |
+| Bias(24) | {trend.get('bias_24', 0):+.2f}% | 长期乖离 |
 | 量能状态 | {trend.get('volume_status', '未知')} | {trend.get('volume_trend', '')} |
 | **MACD** | DIF={trend.get('macd_dif', 0):.4f} DEA={trend.get('macd_dea', 0):.4f} | {trend.get('macd_status', '')} {trend.get('macd_signal', '')} |
 | **RSI** | RSI(6)={trend.get('rsi_6', 0):.1f} RSI(12)={trend.get('rsi_12', 0):.1f} RSI(24)={trend.get('rsi_24', 0):.1f} | {trend.get('rsi_status', '')} {trend.get('rsi_signal', '')} |
 | **KDJ** | K={kdj_k} D={kdj_d} J={kdj_j} | {kdj_status} {kdj_signal} |
 | 系统信号 | {trend.get('buy_signal', '未知')} | |
 | 系统评分 | {trend.get('signal_score', 0)}/100 | |
+| **支撑位(MA5)** | **{trend.get('support_ma5', 'N/A')} 元** | 短期关键支撑 |
+| **支撑位(MA10)** | **{trend.get('support_ma10', 'N/A')} 元** | 中期关键支撑 |
 
+### 技术指标详解
+
+#### MACD 指标
+| 指标 | 数值 | 状态 |
+|------|------|------|
+| DIF | {trend.get('macd_dif', 0):.4f} | |
+| DEA | {trend.get('macd_dea', 0):.4f} | |
+| MACD柱 | {trend.get('macd_bar', 0):.4f} | |
+| MACD状态 | {trend.get('macd_status', '未知')} | |
+| 信号 | {trend.get('macd_signal', '未知')} | |
+
+#### RSI 指标（超买超卖）
+| 指标 | 数值 | 解读 |
+|------|------|------|
+| RSI(6) | {trend.get('rsi_6', 0):.1f} | 短期 |
+| RSI(12) | {trend.get('rsi_12', 0):.1f} | 中期 |
+| RSI(24) | {trend.get('rsi_24', 0):.1f} | 长期 |
+| RSI状态 | {trend.get('rsi_status', '未知')} | >70超买 <30超卖 |
+| 信号 | {trend.get('rsi_signal', '未知')} | |
+"""
+            
+            # 添加新指标（BOLL/KDJ/ATR）
+            if trend.get('boll_upper', 0) > 0:
+                prompt += f"""
+#### 布林带（BOLL）- 波动区间
+| 指标 | 数值 | 解读 |
+|------|------|------|
+| 上轨 | {trend.get('boll_upper', 0):.2f} 元 | 压力位 |
+| 中轨 | {trend.get('boll_middle', 0):.2f} 元 | 支撑/压力 |
+| 下轨 | {trend.get('boll_lower', 0):.2f} 元 | 支撑位 |
+| 价格位置 | {trend.get('boll_position', 0):.1f}% | 0-100%，50%为中性 |
+| 带宽 | {trend.get('boll_bandwidth', 0):.2f}% | <10%收窄，变盘在即 |
+| 状态 | {trend.get('boll_status', '未知')} | |
+| 信号 | {trend.get('boll_signal', '未知')} | |
+"""
+            
+            if trend.get('kdj_k', 0) > 0:
+                kdj_buy_stars = '★' * trend.get('kdj_buy_strength', 0) + '☆' * (5 - trend.get('kdj_buy_strength', 0))
+                kdj_sell_stars = '★' * trend.get('kdj_sell_strength', 0) + '☆' * (5 - trend.get('kdj_sell_strength', 0))
+                prompt += f"""
+#### KDJ 指标 - 短线买卖点
+| 指标 | 数值 | 解读 |
+|------|------|------|
+| K值 | {trend.get('kdj_k', 0):.1f} | 快线 |
+| D值 | {trend.get('kdj_d', 0):.1f} | 慢线 |
+| J值 | {trend.get('kdj_j', 0):.1f} | J<0超卖，J>100超买 |
+| 状态 | {trend.get('kdj_status', '未知')} | |
+| 买入强度 | {kdj_buy_stars} ({trend.get('kdj_buy_strength', 0)}/5) | 5星=强烈买入 |
+| 卖出强度 | {kdj_sell_stars} ({trend.get('kdj_sell_strength', 0)}/5) | 5星=强烈卖出 |
+| 信号 | {trend.get('kdj_signal', '未知')} | |
+"""
+            
+            if trend.get('atr', 0) > 0:
+                prompt += f"""
+#### ATR 波动率 - 风险管理
+| 指标 | 数值 | 解读 |
+|------|------|------|
+| ATR值 | {trend.get('atr', 0):.2f} 元 | |
+| ATR占比 | {trend.get('atr_pct', 0):.2f}% | 占当前股价 |
+| 波动等级 | {trend.get('atr_level', '未知')} | 极低/低/正常/高/极高 |
+| **止损位** | **{trend.get('atr_stop_loss', 0):.2f} 元** | 建议止损位（2倍ATR） |
+| **止盈位** | **{trend.get('atr_take_profit', 0):.2f} 元** | 建议止盈位（3倍ATR） |
+| 信号 | {trend.get('atr_signal', '未知')} | |
+"""
+            
+            prompt += f"""
 #### 系统分析理由
 **买入理由**：
 {chr(10).join('- ' + r for r in trend.get('signal_reasons', ['无'])) if trend.get('signal_reasons') else '- 无'}
@@ -1234,6 +1136,37 @@ class GeminiAnalyzer:
 - 价格较昨日变化：{context.get('price_change_ratio', 'N/A')}%
 """
         
+        # 添加系统预计算的检查清单
+        if 'pre_checklist' in context:
+            checklist = context['pre_checklist']
+            prompt += f"""
+---
+
+## 🔍 系统预判检查清单（基于技术指标自动计算）
+
+以下是系统根据实际数据预先计算的检查结果，请在分析中 **逐项确认或修正**，并在 `action_checklist` 中输出最终判定：
+
+| 检查项 | 系统判定 | 依据 |
+|--------|----------|------|
+"""
+            for item in checklist:
+                prompt += f"| {item['name']} | {item['status']} | {item['detail']} |\n"
+
+            prompt += """
+> **重要**：以上为系统基于阈值自动判定，AI 应结合消息面、板块趋势等综合因素，在最终 `action_checklist` 中输出修正后的判定。
+> 如发现系统判定有误，请在分析中明确说明修正原因。
+"""
+
+        # 添加所属板块信息
+        if 'belong_board' in context:
+            boards = context['belong_board']
+            prompt += f"""
+### 所属板块
+该股票所属板块：**{' | '.join(boards)}**
+
+> 请结合板块信息分析该股票在行业中的地位、板块整体趋势、以及板块轮动对个股的影响。
+"""
+
         # 添加新闻搜索结果（重点区域）
         prompt += """
 ---
@@ -1277,18 +1210,153 @@ class GeminiAnalyzer:
 如果上方显示的股票名称为"股票{code}"或不正确，请在分析开头**明确输出该股票的正确中文全称**。
 
 ### 重点关注（必须明确回答）：
-1. ❓ 是否满足 MA5>MA10>MA20 多头排列？
+
+#### 📈 趋势判断
+1. ❓ 是否满足 MA5>MA10>MA20>MA60 多头排列？当前均线形态是什么？
 2. ❓ 当前乖离率是否在安全范围内（<5%）？—— 超过5%必须标注"严禁追高"
-3. ❓ 量能是否配合（缩量回调/放量突破）？
-4. ❓ 筹码结构是否健康？
-5. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）
+3. ❓ Bias(6/12/24) 乖离指标显示的市场情绪如何？是否过度乐观或悲观？
+4. ❓ 当前价格距离关键支撑位（MA5/MA10）有多远？跌破风险大吗？
+
+#### 💰 量价配合
+5. ❓ 量能是否配合（缩量回调/放量突破）？5日量比是多少？
+6. ❓ 换手率水平如何？是否存在异常放量或缩量？
+7. ❓ 量价背离情况：价涨量缩？价跌量增？
+
+#### 🎯 技术指标
+8. ❓ **MACD 状态**：DIF/DEA 是否金叉？柱状图趋势如何？是否零轴上方运行？
+9. ❓ **RSI 超买超卖**：RSI(6/12/24) 是否处于超买区(>70)或超卖区(<30)？
+10. ❓ **布林带(BOLL)**：价格位于上/中/下轨哪个位置？带宽是否收窄？是否有突破信号？
+11. ❓ **KDJ 短线买卖点**：K/D/J值是多少？是否金叉/死叉？买入强度/卖出强度各几星？
+12. ❓ **ATR 波动率**：波动等级是什么？基于ATR的止损位和止盈位建议是多少？
+
+#### 💎 筹码与资金
+13. ❓ 筹码结构是否健康？获利比例多少？筹码集中度如何？
+14. ❓ 平均成本与当前价格的关系？筹码是否松动？
+15. ❓ 市盈率/市净率估值水平如何？是否存在泡沫风险？
+
+#### 📰 消息面与风险
+16. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）
+17. ❓ 有无利好催化剂？（业绩预增、政策利好、行业景气等）
+18. ❓ 60日涨跌幅如何？中期表现是强势还是弱势？
+
+#### 🎲 综合风险评估
+19. ❓ 当前位置风险收益比如何？值得买入/加仓吗？
+20. ❓ 如果买入，具体的进场点位、止损位、止盈位建议是什么？
+21. ❓ 持仓者和空仓者分别应该采取什么策略？
 
 ### 决策仪表盘要求：
+
+#### 📋 基础信息
 - **股票名称**：必须输出正确的中文全称（如"贵州茅台"而非"股票600519"）
-- **核心结论**：一句话说清该买/该卖/该等
-- **持仓分类建议**：空仓者怎么做 vs 持仓者怎么做
-- **具体狙击点位**：买入价、止损价、目标价（精确到分）
-- **检查清单**：每项用 ✅/⚠️/❌ 标记
+- **核心结论**：一句话说清该买/该卖/该等（不超过30字）
+- **信号类型**：🟢买入信号 / 🟡持有观望 / 🔴卖出信号
+
+#### 💡 决策建议
+- **持仓分类建议**：
+  - **空仓者**：具体操作建议（何时介入、分几批、每批仓位）
+  - **持仓者**：具体操作建议（继续持有、加仓、减仓、止盈）
+- **信心等级**：高/中/低，并说明理由
+
+#### 🎯 狙击点位（精确到分）
+- **理想买入点**：最佳进场价格（如回踩MA5支撑）
+- **次优买入点**：备选进场价格（如回踩MA10支撑）
+- **止损位**：明确的止损价格（跌破则离场）
+- **止盈目标**：分批止盈策略（第一目标价、第二目标价）
+- **建议仓位**：具体仓位建议（如2-3成、半仓等）
+
+#### ✅ 检查清单（每项必须标记）
+- ✅/⚠️/❌ 多头排列
+- ✅/⚠️/❌ 乖离率<5%（安全）
+- ✅/⚠️/❌ 量能配合
+- ✅/⚠️/❌ 筹码健康
+- ✅/⚠️/❌ 无重大利空
+- ✅/⚠️/❌ MACD 多头
+- ✅/⚠️/❌ RSI 安全区
+- ✅/⚠️/❌ BOLL 突破信号
+- ✅/⚠️/❌ KDJ 买入信号
+- ✅/⚠️/❌ ATR 风险可控
+
+#### 📊 全面技术分析要求
+在 `technical_analysis` 字段中，**必须包含以下所有维度的分析**：
+
+1. **趋势判断**：均线形态、趋势强度、趋势方向
+2. **MACD 分析**：DIF/DEA 数值、金叉/死叉状态、柱状图趋势、零轴位置
+3. **RSI 分析**：RSI(6/12/24) 数值、超买超卖状态、背离情况
+4. **BOLL 分析**：上轨XX元、中轨XX元、下轨XX元、当前位置XX%、带宽XX%、状态、信号
+5. **KDJ 分析**：K=XX、D=XX、J=XX、金叉/死叉状态、买入强度XX星、卖出强度XX星、信号
+6. **ATR 分析**：ATR=XX元（占股价XX%）、波动等级、止损位XX元、止盈位XX元、信号
+7. **量价分析**：量比、换手率、量能状态、量价配合情况
+8. **乖离率分析**：Bias(6/12/24) 数值、市场情绪判断
+9. **支撑压力**：关键支撑位、关键压力位
+10. **风险提示**：当前最大风险点、需要注意的信号
+
+### 📊 全面技术分析示例格式（必须严格遵循）：
+
+在 `technical_analysis` 字段中，必须按以下格式提供**完整、详细**的技术分析：
+
+```
+【趋势判断】
+当前均线排列：MA5>MA10>MA20>MA60（多头排列）/ 空头排列 / 缠绕
+趋势强度：XX/100，趋势状态：强势上升 / 震荡整理 / 弱势下跌
+乖离率：MA5乖离+X.XX%（安全/超买），MA10乖离+X.XX%，MA20乖离+X.XX%
+Bias乖离：Bias(6)=+X.XX%，Bias(12)=+X.XX%，Bias(24)=+X.XX%
+关键支撑：MA5支撑XX元，MA10支撑XX元，MA20支撑XX元
+
+【MACD指标】
+DIF=X.XXXX，DEA=X.XXXX，MACD柱=X.XXXX
+状态：金叉上行 / 死叉下行 / 零轴上方运行 / 零轴下方运行
+信号：多头强势 / 空头压制 / 即将金叉 / 背离警告
+柱状图趋势：放大 / 缩小，表明动能增强 / 减弱
+
+【RSI指标】
+RSI(6)=XX.X（短期），RSI(12)=XX.X（中期），RSI(24)=XX.X（长期）
+状态：正常区间(30-70) / 超买区(>70) / 超卖区(<30)
+信号：多头强势 / 空头压制 / 超买回调风险 / 超卖反弹机会
+背离情况：无背离 / 顶背离(卖出信号) / 底背离(买入信号)
+
+【BOLL布林带】
+上轨XX.XX元（压力位），中轨XX.XX元（支撑/压力），下轨XX.XX元（支撑位）
+当前价格位置：XX.X%（0%=下轨，50%=中轨，100%=上轨）
+带宽：XX.XX%，状态：收窄(变盘在即) / 正常 / 扩张(趋势加速)
+价格位置：运行于上轨与中轨之间 / 中轨附近 / 下轨附近
+信号：突破上轨(强势) / 回踩中轨(支撑测试) / 跌破下轨(弱势)
+
+【KDJ指标】
+K=XX.X（快线），D=XX.X（慢线），J=XX.X（超前指标）
+状态：K>D金叉多头排列 / K<D死叉空头排列 / 高位钝化 / 低位钝化
+位置：超买区(>80) / 正常区(20-80) / 超卖区(<20)
+买入强度：★★★★★ (5星) / ★★★☆☆ (3星) / ☆☆☆☆☆ (0星)
+卖出强度：★★★★★ (5星) / ★★★☆☆ (3星) / ☆☆☆☆☆ (0星)
+信号：强烈买入 / 持股待涨 / 观望 / 逢高减仓 / 强烈卖出
+
+【ATR波动率】
+ATR=X.XX元（真实波幅），占当前股价X.XX%
+波动等级：极低(<2%) / 低(2-3%) / 正常(3-5%) / 高(5-8%) / 极高(>8%)
+风控建议：
+- 止损位：XX.XX元（基于2倍ATR，当前价-2*ATR）
+- 止盈位：XX.XX元（基于3倍ATR，当前价+3*ATR）
+市场状态：波动率低，市场平静 / 波动率正常 / 波动率高，需警惕风险
+信号：波动率收缩，酝酿变盘 / 波动率扩张，趋势加速 / 波动率正常，风险可控
+
+【量价配合】
+量比：X.XX（相对5日均量），换手率：XX.XX%
+量能状态：放量突破 / 缩量回调 / 温和放量 / 地量 / 巨量
+5日量比：X.XX倍，量能趋势：递增 / 递减 / 稳定
+量价关系：量价齐升(健康) / 价涨量缩(背离) / 价跌量增(恐慌) / 价跌量缩(惜售)
+换手率分析：低于3%(冷门) / 3-7%(正常) / 7-15%(活跃) / 15-25%(高度活跃) / >25%(异常)
+
+【综合评估】
+技术面总体状态：强势上升 / 震荡整理 / 弱势下跌
+多头信号数量：X个，空头信号数量：X个
+最大风险点：乖离率过高 / 量能衰竭 / 指标背离 / 破位风险
+买入时机判断：立即买入 / 等待回调 / 观望为主 / 不宜介入
+```
+
+**⚠️ 重要提醒**：
+1. 每个指标的数值必须从表格数据中精确提取，严禁编造
+2. 每个指标的状态和信号必须基于数值进行合理判断
+3. 必须包含以上所有维度的分析，不可遗漏
+4. 分析要客观、准确、可操作，避免模糊表述
 
 请输出完整的 JSON 格式决策仪表盘。"""
         

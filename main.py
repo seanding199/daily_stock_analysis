@@ -501,13 +501,13 @@ def main() -> int:
                     serpapi_keys=config.serpapi_keys
                 )
             
-            if config.gemini_api_key or config.openai_api_key:
-                analyzer = GeminiAnalyzer(api_key=config.gemini_api_key)
+            if config.openai_api_key:
+                analyzer = GeminiAnalyzer()
                 if not analyzer.is_available():
                     logger.warning("AI 分析器初始化后不可用，请检查 API Key 配置")
                     analyzer = None
             else:
-                logger.warning("未检测到 API Key (Gemini/OpenAI)，将仅使用模板生成报告")
+                logger.warning("未检测到 OpenAI API Key，将仅使用模板生成报告")
             
             run_market_review(
                 notifier=notifier, 

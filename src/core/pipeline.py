@@ -203,21 +203,38 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.warning(f"[{code}] 获取筹码分布失败: {e}")
             
+            # Step 2.5: 获取所属板块
+            board_names = None
+            try:
+                board_names = self.fetcher_manager.get_belong_board(code)
+                if board_names:
+                    logger.info(f"[{code}] 所属板块: {', '.join(board_names[:5])}")
+                else:
+                    logger.debug(f"[{code}] 未获取到板块信息")
+            except Exception as e:
+                logger.warning(f"[{code}] 获取所属板块失败: {e}")
+
             # Step 3: 趋势分析（基于交易理念）
             trend_result: Optional[TrendAnalysisResult] = None
             try:
-                # 获取历史数据进行趋势分析
-                context = self.db.get_analysis_context(code)
-                if context and 'raw_data' in context:
-                    import pandas as pd
-                    raw_data = context['raw_data']
-                    if isinstance(raw_data, list) and len(raw_data) > 0:
-                        df = pd.DataFrame(raw_data)
-                        trend_result = self.trend_analyzer.analyze(df, code)
-                        logger.info(f"[{code}] 趋势分析: {trend_result.trend_status.value}, "
-                                  f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
+                # 获取历史数据进行趋势分析（使用 get_latest_data 获取最近30天数据）
+                import pandas as pd
+                stock_daily_list = self.db.get_latest_data(code, days=30)
+                if stock_daily_list and len(stock_daily_list) > 0:
+                    # 将 StockDaily 对象列表转换为 DataFrame
+                    raw_data = [item.to_dict() for item in stock_daily_list]
+                    df = pd.DataFrame(raw_data)
+                    # 确保按日期升序排列
+                    if 'date' in df.columns:
+                        df = df.sort_values('date')
+                    trend_result = self.trend_analyzer.analyze(df, code)
+                    logger.info(f"[{code}] 趋势分析: {trend_result.trend_status.value}, "
+                              f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
+                else:
+                    logger.warning(f"[{code}] 无历史数据，跳过趋势分析")
             except Exception as e:
                 logger.warning(f"[{code}] 趋势分析失败: {e}")
+                logger.exception(f"[{code}] 趋势分析详细错误:")
             
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
             news_context = None
@@ -273,13 +290,14 @@ class StockAnalysisPipeline:
                     'yesterday': {}
                 }
             
-            # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、股票名称）
+            # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、板块、股票名称）
             enhanced_context = self._enhance_context(
-                context, 
-                realtime_quote, 
-                chip_data, 
+                context,
+                realtime_quote,
+                chip_data,
                 trend_result,
-                stock_name  # 传入股票名称
+                stock_name,  # 传入股票名称
+                board_names  # 传入板块信息
             )
             
             # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
@@ -324,20 +342,22 @@ class StockAnalysisPipeline:
         realtime_quote,
         chip_data: Optional[ChipDistribution],
         trend_result: Optional[TrendAnalysisResult],
-        stock_name: str = ""
+        stock_name: str = "",
+        board_names: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         增强分析上下文
-        
-        将实时行情、筹码分布、趋势分析结果、股票名称添加到上下文中
-        
+
+        将实时行情、筹码分布、趋势分析结果、板块信息、股票名称添加到上下文中
+
         Args:
             context: 原始上下文
             realtime_quote: 实时行情数据（UnifiedRealtimeQuote 或 None）
             chip_data: 筹码分布数据
             trend_result: 趋势分析结果
             stock_name: 股票名称
-            
+            board_names: 所属板块名称列表
+
         Returns:
             增强后的上下文
         """
@@ -381,23 +401,122 @@ class StockAnalysisPipeline:
                 'chip_status': chip_data.get_chip_status(current_price or 0),
             }
         
-        # 添加趋势分析结果
+        # 添加趋势分析结果（包含所有指标，包括新增的BOLL/KDJ/ATR）
         if trend_result:
-            enhanced['trend_analysis'] = {
-                'trend_status': trend_result.trend_status.value,
-                'ma_alignment': trend_result.ma_alignment,
-                'trend_strength': trend_result.trend_strength,
-                'bias_ma5': trend_result.bias_ma5,
-                'bias_ma10': trend_result.bias_ma10,
-                'volume_status': trend_result.volume_status.value,
-                'volume_trend': trend_result.volume_trend,
-                'buy_signal': trend_result.buy_signal.value,
-                'signal_score': trend_result.signal_score,
-                'signal_reasons': trend_result.signal_reasons,
-                'risk_factors': trend_result.risk_factors,
-            }
-        
+            # 使用 to_dict() 获取完整的数据，包括新指标
+            enhanced['trend_analysis'] = trend_result.to_dict()
+
+        # 添加所属板块信息
+        if board_names:
+            enhanced['belong_board'] = board_names
+
+        # 预计算检查清单（基于趋势和筹码数据）
+        if trend_result:
+            enhanced['pre_checklist'] = self._build_pre_checklist(trend_result, chip_data)
+
         return enhanced
+
+    def _build_pre_checklist(
+        self,
+        trend: TrendAnalysisResult,
+        chip_data: Optional[ChipDistribution]
+    ) -> List[Dict[str, str]]:
+        """
+        基于技术指标预计算检查清单
+
+        Returns:
+            检查清单列表，每项包含 name, status(✅/⚠️/❌), detail
+        """
+        checks = []
+
+        # 1. 多头排列
+        is_bull = trend.trend_status.value in ("强势多头", "多头排列")
+        is_weak_bull = trend.trend_status.value == "弱势多头"
+        if is_bull:
+            checks.append({"name": "多头排列", "status": "✅", "detail": f"{trend.ma_alignment}"})
+        elif is_weak_bull:
+            checks.append({"name": "多头排列", "status": "⚠️", "detail": f"{trend.ma_alignment}（弱势多头）"})
+        else:
+            checks.append({"name": "多头排列", "status": "❌", "detail": f"当前为{trend.trend_status.value}，{trend.ma_alignment}"})
+
+        # 2. 乖离率
+        bias = abs(trend.bias_ma5)
+        if bias < 2:
+            checks.append({"name": "乖离率<5%", "status": "✅", "detail": f"MA5乖离率{trend.bias_ma5:+.2f}%，最佳区间"})
+        elif bias < 5:
+            checks.append({"name": "乖离率<5%", "status": "⚠️", "detail": f"MA5乖离率{trend.bias_ma5:+.2f}%，可小仓"})
+        else:
+            checks.append({"name": "乖离率<5%", "status": "❌", "detail": f"MA5乖离率{trend.bias_ma5:+.2f}%，严禁追高！"})
+
+        # 3. 量能配合
+        vol_status = trend.volume_status.value
+        if vol_status in ("缩量回调", "放量上涨"):
+            checks.append({"name": "量能配合", "status": "✅", "detail": f"{vol_status}，5日量比{trend.volume_ratio_5d:.2f}"})
+        elif vol_status in ("量能正常", "缩量上涨"):
+            checks.append({"name": "量能配合", "status": "⚠️", "detail": f"{vol_status}，5日量比{trend.volume_ratio_5d:.2f}"})
+        else:
+            checks.append({"name": "量能配合", "status": "❌", "detail": f"{vol_status}，5日量比{trend.volume_ratio_5d:.2f}"})
+
+        # 4. 筹码健康
+        if chip_data:
+            profit = chip_data.profit_ratio
+            conc = chip_data.concentration_90
+            if 0.3 <= profit <= 0.7 and conc < 0.15:
+                checks.append({"name": "筹码健康", "status": "✅", "detail": f"获利{profit:.0%}，集中度{conc:.1%}"})
+            elif profit > 0.9 or conc > 0.25:
+                checks.append({"name": "筹码健康", "status": "❌", "detail": f"获利{profit:.0%}，集中度{conc:.1%}，筹码松动"})
+            else:
+                checks.append({"name": "筹码健康", "status": "⚠️", "detail": f"获利{profit:.0%}，集中度{conc:.1%}"})
+        else:
+            checks.append({"name": "筹码健康", "status": "⚠️", "detail": "数据缺失"})
+
+        # 5. MACD
+        macd_val = trend.macd_status.value
+        if macd_val in ("金叉", "多头"):
+            status = "✅" if trend.macd_dif > 0 else "⚠️"
+            above_zero = "零轴上方" if trend.macd_dif > 0 else "零轴下方"
+            checks.append({"name": "MACD多头", "status": status, "detail": f"{macd_val}，DIF={trend.macd_dif:.4f}，{above_zero}"})
+        else:
+            checks.append({"name": "MACD多头", "status": "❌", "detail": f"{macd_val}，DIF={trend.macd_dif:.4f}"})
+
+        # 6. RSI安全区
+        rsi = trend.rsi_12
+        if 30 <= rsi <= 70:
+            checks.append({"name": "RSI安全区", "status": "✅", "detail": f"RSI(12)={rsi:.1f}，{trend.rsi_status.value}"})
+        elif rsi > 70:
+            checks.append({"name": "RSI安全区", "status": "❌", "detail": f"RSI(12)={rsi:.1f}，超买区域"})
+        else:
+            checks.append({"name": "RSI安全区", "status": "⚠️", "detail": f"RSI(12)={rsi:.1f}，超卖区域"})
+
+        # 7. BOLL突破
+        if trend.boll_upper > 0:
+            pos = trend.boll_position
+            if pos > 80:
+                checks.append({"name": "BOLL突破", "status": "✅", "detail": f"价格位置{pos:.0f}%，{trend.boll_status}"})
+            elif pos > 40:
+                checks.append({"name": "BOLL突破", "status": "⚠️", "detail": f"价格位置{pos:.0f}%，{trend.boll_status}"})
+            else:
+                checks.append({"name": "BOLL突破", "status": "❌", "detail": f"价格位置{pos:.0f}%，{trend.boll_status}"})
+
+        # 8. KDJ买入信号
+        if trend.kdj_k > 0:
+            if trend.kdj_buy_strength >= 3:
+                checks.append({"name": "KDJ买入", "status": "✅", "detail": f"K={trend.kdj_k:.1f} D={trend.kdj_d:.1f} J={trend.kdj_j:.1f}，买入强度{trend.kdj_buy_strength}/5星"})
+            elif trend.kdj_sell_strength >= 3:
+                checks.append({"name": "KDJ买入", "status": "❌", "detail": f"K={trend.kdj_k:.1f} D={trend.kdj_d:.1f} J={trend.kdj_j:.1f}，卖出强度{trend.kdj_sell_strength}/5星"})
+            else:
+                checks.append({"name": "KDJ买入", "status": "⚠️", "detail": f"K={trend.kdj_k:.1f} D={trend.kdj_d:.1f} J={trend.kdj_j:.1f}，{trend.kdj_status}"})
+
+        # 9. ATR风险
+        if trend.atr > 0:
+            if trend.atr_pct < 5:
+                checks.append({"name": "ATR风险可控", "status": "✅", "detail": f"波动率{trend.atr_pct:.1f}%（{trend.atr_level}），止损{trend.atr_stop_loss:.2f}，止盈{trend.atr_take_profit:.2f}"})
+            elif trend.atr_pct < 8:
+                checks.append({"name": "ATR风险可控", "status": "⚠️", "detail": f"波动率{trend.atr_pct:.1f}%（{trend.atr_level}），止损{trend.atr_stop_loss:.2f}，止盈{trend.atr_take_profit:.2f}"})
+            else:
+                checks.append({"name": "ATR风险可控", "status": "❌", "detail": f"波动率{trend.atr_pct:.1f}%（{trend.atr_level}），波动过大"})
+
+        return checks
     
     def _describe_volume_ratio(self, volume_ratio: float) -> str:
         """
