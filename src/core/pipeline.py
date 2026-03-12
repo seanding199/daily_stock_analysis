@@ -431,11 +431,11 @@ class StockAnalysisPipeline:
 
         # 1. 多头排列
         is_bull = trend.trend_status.value in ("强势多头", "多头排列")
-        is_weak_bull = trend.trend_status.value == "弱势多头"
+        is_weak_bull = trend.trend_status.value in ("均线缠绕偏多", "弱势多头")
         if is_bull:
             checks.append({"name": "多头排列", "status": "✅", "detail": f"{trend.ma_alignment}"})
         elif is_weak_bull:
-            checks.append({"name": "多头排列", "status": "⚠️", "detail": f"{trend.ma_alignment}（弱势多头）"})
+            checks.append({"name": "多头排列", "status": "⚠️", "detail": f"{trend.ma_alignment}（均线缠绕，非标准多头）"})
         else:
             checks.append({"name": "多头排列", "status": "❌", "detail": f"当前为{trend.trend_status.value}，{trend.ma_alignment}"})
 

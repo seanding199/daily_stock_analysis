@@ -1053,9 +1053,7 @@ class DatabaseManager:
         判断条件（严格按均线自身排列，不混入收盘价）：
         - 标准多头排列：MA5 > MA10 > MA20（短期均线全部在长期均线上方）
         - 标准空头排列：MA5 < MA10 < MA20
-        - 弱势多头：MA5 > MA10 但 MA10 <= MA20
-        - 弱势空头：MA5 < MA10 但 MA10 >= MA20
-        - 其他均线缠绕：震荡整理
+        - 其他情况：均线缠绕/震荡格局
         """
         ma5 = data.ma5 or 0
         ma10 = data.ma10 or 0
@@ -1065,10 +1063,8 @@ class DatabaseManager:
             return "标准多头排列 📈"
         elif 0 < ma5 < ma10 < ma20:
             return "空头排列 📉"
-        elif ma5 > ma10 and ma10 <= ma20 and ma5 > 0:
-            return "弱势多头（非标准多头）🔼"
         elif ma5 < ma10 and ma10 >= ma20 and ma5 > 0:
-            return "弱势空头 🔽"
+            return "偏空震荡 🔽"
         else:
             return "均线缠绕/震荡整理 ↔️"
 

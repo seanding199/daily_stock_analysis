@@ -31,7 +31,7 @@ class TrendStatus(Enum):
     """趋势状态枚举"""
     STRONG_BULL = "强势多头"      # MA5 > MA10 > MA20，且间距扩大
     BULL = "多头排列"             # MA5 > MA10 > MA20
-    WEAK_BULL = "弱势多头"        # MA5 > MA10，但 MA10 < MA20
+    WEAK_BULL = "均线缠绕偏多"    # MA5 > MA10，但 MA10 < MA20（非标准多头）
     CONSOLIDATION = "盘整"        # 均线缠绕
     WEAK_BEAR = "弱势空头"        # MA5 < MA10，但 MA10 > MA20
     BEAR = "空头排列"             # MA5 < MA10 < MA20
@@ -541,7 +541,7 @@ class StockTrendAnalyzer:
                 
         elif ma5 > ma10 and ma10 <= ma20:
             result.trend_status = TrendStatus.WEAK_BULL
-            result.ma_alignment = "弱势多头，MA5>MA10 但 MA10≤MA20"
+            result.ma_alignment = "均线缠绕偏多，MA5>MA10 但 MA10≤MA20（非标准多头排列）"
             result.trend_strength = 55
             
         elif ma5 < ma10 < ma20:

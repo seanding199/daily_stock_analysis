@@ -344,9 +344,9 @@ class GeminiAnalyzer:
 
 ### 2. 趋势交易（顺势而为）
 - **标准多头排列**：必须严格满足 MA5 > MA10 > MA20（三条均线依次从上到下排列）
-- **弱势多头**（MA5>MA10 但 MA10≤MA20）：这不是真正的多头排列！`is_bullish` 必须为 `false`
-- **均线缠绕**（如 MA20>MA5>MA10 或各均线交叉纠缠）：属于震荡格局，不能标注为多头
-- 只做标准多头排列的股票，弱势多头最多给"持有/小仓位"
+- **非标准多头排列**的所有情况（包括MA5>MA10但MA10≤MA20、MA20>MA5>MA10等），均应描述为**"均线缠绕/震荡格局"**，不得使用"弱势多头"表述（"多头"二字本身暗示上涨趋势，在非标准排列下会产生误导）
+- `is_bullish` 必须为 `false`，除非严格满足 MA5>MA10>MA20
+- 只做标准多头排列的股票，均线缠绕最多给"持有/小仓位"
 - 均线发散上行优于均线粘合
 - 趋势强度判断：看均线间距是否在扩大
 
@@ -390,6 +390,9 @@ class GeminiAnalyzer:
 - 理想买入点（如MA5附近）必须 > 风控减仓线（如MA20）
 - 如果 MA5 < MA20（均线非多头），则不能把 MA5 设为理想买入点
 - 止损位必须只设一个明确价格，不能出现两个矛盾的止损标准
+- **止损价格精度**：止损位 = 买入价 × (1 - 止损百分比)，计算结果四舍五入到分
+- **"有效跌破"定义**：当提及"跌破某均线则离场"时，必须明确定义"有效跌破"标准，如"收盘价跌破"或"盘中放量跌破且30分钟内未收回"
+- **持仓/空仓建议一致性**：同一个价位不能对持仓者是"离场信号"、对空仓者是"买入区间"。若跌破MA20是持仓者的风控离场条件，那么MA20下方就不能是空仓者的建议买入区域——破位后支撑变压力，是技术分析的铁律
 
 ### 规则D：量能解读必须结合多空背景
 - 缩量回调 + 标准多头排列（MA5>MA10>MA20）→ 可正面解读为"洗盘"
@@ -417,12 +420,28 @@ class GeminiAnalyzer:
 - 当多空信号冲突时（如MACD金叉但KDJ超买），必须在结论中体现冲突和不确定性
 - 利空信号（超买、均线缠绕、业绩下滑、套牢盘压力）的权重不得低于利多信号
 - 盈亏比检查：潜在盈利/潜在亏损 < 2:1 时，不应给出买入建议
+- **MACD金叉质量评估**：缩量背景+贴近零轴的弱金叉+叠加KDJ超买/均线缠绕/基本面利空时，必须提示"骗线"（假金叉）风险，不能只提利多面
+- **KDJ超买修复标准**：J值回落至80以下只是初步条件，完整修复需K值和D值同步回落至70以下且未形成有效死叉，三者缺一不可
 
 ### 规则H：支撑位/压力位识别规则
 - 支撑位应选择最近的**有效**支撑均线，优先级：MA20（中期趋势线）> MA10 > MA5
 - 当 MA5 < MA20 时，MA20 才是更有效的支撑位，不应把更低的 MA5 标为核心支撑
-- 压力位需考虑上方套牢盘密集区（筹码平均成本附近），获利比例<50%时平均成本即为强压力位
-- 目标位不应设在套牢密集区之上（除非有重大利好催化突破）
+- **压力位层级**：必须明确标注第一压力位（最近阻力）和第二压力位，不能跳过强阻力直接给更高目标
+- 压力位需考虑上方套牢盘密集区（筹码平均成本附近），获利比例<50%时平均成本即为第一压力位/核心抛压位
+- **目标位不得超过第一压力位**（除非有重大利好催化或放量突破确认）：获利比例<50%时，目标位最多设在平均成本附近，不可设在其上方
+- 乖离率的参考价值仅在明确单边趋势中有效；在无趋势震荡格局下，低乖离率不代表"安全"，不应过度强调
+
+### 规则I：业绩分析严谨性
+- **存货跌价准备** 属于经常性损益科目（资产减值损失），不得误写为"非经常性损益"
+- 判断业绩增长真实性时，若归母净利润增幅与扣非净利润增幅接近，说明非经常性损益影响小
+- 营收增速与净利润增速严重背离时（如营收微降但净利润暴增），必须在分析中明确指出低基数/减值回转等真实原因
+- 利好催化（如新药上市、海外拓展）必须量化短期贡献，对年营收占比<5%的业务不应过度放大
+- 对不确定性（如客户采购策略调整、市场竞争格局变化）必须如实披露，不能只提利好不提风险
+
+### 规则J：检查清单完整性
+- 检查清单每一项必须输出完整判断理由，不允许内容截断
+- 如果输入数据未提供某项指标（如ATR），应标注"❓未提供数据，无法评估"，不能同时写"无法评估"又写"风险可控"
+- 每项检查结果必须前后一致，判定标记(✅/⚠️/❌)与文字描述不能矛盾
 
 ## 输出格式：决策仪表盘 JSON
 
@@ -443,8 +462,8 @@ class GeminiAnalyzer:
             "signal_type": "🟢买入信号/🟡持有观望/🔴卖出信号/⚠️风险警告",
             "time_sensitivity": "立即行动/今日内/本周内/不急",
             "position_advice": {
-                "no_position": "空仓者建议：具体操作指引",
-                "has_position": "持仓者建议：具体操作指引"
+                "no_position": "空仓者建议：具体操作指引（不得与持仓者建议在同一价位产生反向指令）",
+                "has_position": "持仓者建议：具体操作指引（含明确的'有效跌破'定义，如收盘价跌破或放量跌破30分钟未收回）"
             }
         },
 
@@ -483,7 +502,7 @@ class GeminiAnalyzer:
             "latest_news": "【最新消息】近期重要新闻摘要",
             "risk_alerts": ["风险点1：具体描述", "风险点2：具体描述"],
             "positive_catalysts": ["利好1：具体描述", "利好2：具体描述"],
-            "earnings_outlook": "业绩预期分析（需区分扣非净利润与归母净利润，分析低基数效应和非经常性损益）",
+            "earnings_outlook": "业绩预期分析（需区分扣非净利润与归母净利润；甄别低基数效应时注意：存货跌价准备属于经常性损益而非非经常性损益；对比营收增速验证利润增长真实性）",
             "sentiment_summary": "舆情情绪一句话总结"
         },
 
@@ -492,7 +511,7 @@ class GeminiAnalyzer:
                 "ideal_buy": "理想买入点：XX元（必须>止损位，且在有效支撑附近）",
                 "secondary_buy": "次优买入点：XX元（在MA10附近）",
                 "stop_loss": "止损位：XX元（唯一明确价格，基于ATR或关键均线）",
-                "take_profit": "目标位：XX元（需考虑上方套牢盘压力）"
+                "take_profit": "目标位：XX元（不得超过第一压力位，获利比例<50%时不得超过平均成本）"
             },
             "position_strategy": {
                 "suggested_position": "建议仓位：X成",
@@ -500,16 +519,16 @@ class GeminiAnalyzer:
                 "risk_control": "风控策略描述（止损位只设一个，不能自相矛盾）"
             },
             "action_checklist": [
-                "✅/⚠️/❌ 检查项1：多头排列（✅仅当MA5>MA10>MA20；⚠️弱势多头MA5>MA10但MA10≤MA20；❌其他）",
+                "✅/⚠️/❌ 检查项1：多头排列（✅仅当MA5>MA10>MA20；⚠️MA5>MA10但MA10≤MA20（均线缠绕）；❌其他）",
                 "✅/⚠️/❌ 检查项2：乖离率<5%（✅<2%；⚠️2-5%；❌>5%）",
-                "✅/⚠️/❌ 检查项3：量能配合（结合趋势背景判断）",
-                "✅/⚠️/❌ 检查项4：无重大利空（业绩大幅下滑也算利空）",
-                "✅/⚠️/❌ 检查项5：筹码健康（获利比例<50%时必须⚠️或❌）",
-                "✅/⚠️/❌ 检查项6：MACD信号（基于输入数据）",
+                "✅/⚠️/❌ 检查项3：量能配合（结合趋势背景判断，非多头下缩量=买盘不足）",
+                "✅/⚠️/❌ 检查项4：无重大利空（业绩大幅下滑>30%也算利空）",
+                "✅/⚠️/❌ 检查项5：筹码健康（获利比例<50%必须⚠️或❌，平均成本为强压力位）",
+                "✅/⚠️/❌ 检查项6：MACD信号（缩量弱金叉+超买/缠绕需警惕骗线）",
                 "✅/⚠️/❌ 检查项7：RSI安全区（>70超买❌；<30超卖看反弹）",
-                "✅/⚠️/❌ 检查项8：KDJ信号（J>100超买❌；J<0超卖看反弹）",
-                "✅/⚠️/❌ 检查项9：ATR风险可控（波动率是否合理）",
-                "✅/⚠️/❌ 检查项10：买卖点逻辑一致（买入点>止损位）"
+                "✅/⚠️/❌ 检查项8：KDJ信号（J>100超买❌；修复需K/D同步回落至70以下）",
+                "✅/⚠️/❌ 检查项9：ATR风险可控（❓如数据未提供则标注无法评估，不可同时写无法评估又写可控）",
+                "✅/⚠️/❌ 检查项10：买卖点逻辑一致（买入点>止损位，持仓/空仓建议不矛盾，内容必须完整不截断）"
             ]
         }
     },
@@ -549,7 +568,7 @@ class GeminiAnalyzer:
 - ✅ KDJ/RSI 未超买
 
 ### 买入（60-79分）：
-- ✅ 标准多头排列（必须条件，弱势多头不够资格）
+- ✅ 标准多头排列（必须条件，均线缠绕不够资格）
 - ✅ 乖离率 <5%
 - ✅ 量能正常
 - ✅ KDJ 未极度超买（J<100）
@@ -558,7 +577,7 @@ class GeminiAnalyzer:
 - ⚪ 允许一项次要条件不满足（但标准多头、KDJ未超买为必须条件）
 
 ### 持有/观望（40-59分）：
-- ⚠️ 弱势多头或均线缠绕（非标准多头排列）
+- ⚠️ 均线缠绕/震荡格局（非标准多头排列）
 - ⚠️ 乖离率 >5%（追高风险）
 - ⚠️ KDJ/RSI 超买
 - ⚠️ 有风险事件
@@ -988,7 +1007,7 @@ class GeminiAnalyzer:
                     ma_verdict = "✅ 标准多头排列 MA5>MA10>MA20"
                     is_strict_bull = True
                 elif ma5_f > ma10_f and ma10_f <= ma20_f:
-                    ma_verdict = "⚠️ 弱势多头（MA5>MA10但MA10≤MA20），非标准多头排列，is_bullish应为false"
+                    ma_verdict = "⚠️ 均线缠绕偏多（MA5>MA10但MA10≤MA20），非标准多头排列，is_bullish应为false"
                     is_strict_bull = False
                 elif ma5_f < ma10_f < ma20_f and ma5_f > 0:
                     ma_verdict = "❌ 空头排列 MA5<MA10<MA20"
@@ -1633,18 +1652,25 @@ ATR=X.XX元（真实波幅），占当前股价X.XX%
                 avg_cost_val = 0
 
             take_profit_price = _extract_price(sniper_points.get('take_profit', ''))
-            # 目标位不应超过平均成本太多（超半数套牢时，解套抛压巨大）
+            # 目标位不应超过平均成本（超半数套牢时，解套抛压巨大，平均成本即第一压力位）
             if take_profit_price > 0 and avg_cost_val > 0 and take_profit_price > avg_cost_val:
+                old_target = take_profit_price
+                # 强制将目标位下调至平均成本附近（第一压力位）
+                capped_target = round(avg_cost_val * 0.99, 2)  # 平均成本略下方
+                sniper_points['take_profit'] = (
+                    f"目标位：{capped_target}元（原{old_target}元超过套牢密集区，"
+                    f"已下调至平均成本{avg_cost_val:.2f}元下方）"
+                )
                 fixes_applied.append(
                     f"获利比例仅{profit_ratio_val:.1f}%，超半数持仓套牢，"
-                    f"目标位{take_profit_price:.2f}元超过平均成本{avg_cost_val:.2f}元，"
-                    f"上方解套抛压极重"
+                    f"目标位从{old_target:.2f}元下调至{capped_target}元"
+                    f"（平均成本{avg_cost_val:.2f}元为第一压力位/核心抛压位）"
                 )
                 risk_alerts = result.dashboard.get('intelligence', {}).get('risk_alerts', [])
                 risk_alerts.append(
                     f"⚠️ 获利比例仅{profit_ratio_val:.1f}%，{100-profit_ratio_val:.1f}%持仓套牢，"
-                    f"平均成本{avg_cost_val:.2f}元附近将面临极强解套抛压，"
-                    f"目标位{take_profit_price:.2f}元需谨慎看待"
+                    f"平均成本{avg_cost_val:.2f}元附近解套抛压极重，"
+                    f"目标位已下调至{capped_target}元"
                 )
                 # 套牢盘压力下不应给买入建议
                 if result.operation_advice in buy_advices:
@@ -1694,7 +1720,45 @@ ATR=X.XX元（真实波幅），占当前股价X.XX%
             if core:
                 core['signal_type'] = '⚠️风险警告'
 
-        # === 检查7：量能解读一致性（规则D）===
+        # === 检查7：持仓/空仓建议一致性（规则C扩展）===
+        core_conclusion = result.dashboard.get('core_conclusion', {})
+        position_advice = core_conclusion.get('position_advice', {})
+        no_pos_text = str(position_advice.get('no_position', ''))
+        has_pos_text = str(position_advice.get('has_position', ''))
+
+        # 检测：持仓者在MA20止损离场 vs 空仓者在MA20下方买入
+        if ma20 > 0:
+            # 提取空仓建议中的买入价格
+            no_pos_buy_price = _extract_price(no_pos_text)
+            # 如果持仓者建议包含MA20离场条件，且空仓者建议在MA20下方买入
+            ma20_exit_keywords = ['跌破', '失守', '离场', '减仓']
+            has_ma20_exit = any(kw in has_pos_text for kw in ma20_exit_keywords) and (
+                str(ma20) in has_pos_text or f"{ma20:.2f}" in has_pos_text or 'MA20' in has_pos_text
+            )
+            if has_ma20_exit and no_pos_buy_price > 0 and no_pos_buy_price < ma20:
+                fixes_applied.append(
+                    f"持仓/空仓建议矛盾：持仓者在MA20({ma20:.2f})离场，"
+                    f"但空仓者被建议在{no_pos_buy_price:.2f}元(MA20下方)买入"
+                )
+                risk_alerts = result.dashboard.get('intelligence', {}).get('risk_alerts', [])
+                risk_alerts.append(
+                    f"⚠️ 系统检测：空仓买入点({no_pos_buy_price}元)在MA20风控线({ma20:.2f}元)下方，"
+                    f"与持仓者的离场条件矛盾（破位后支撑变压力），请谨慎参考"
+                )
+
+        # 同样检查secondary_buy是否在MA20下方
+        secondary_buy_price = _extract_price(sniper_points.get('secondary_buy', ''))
+        if secondary_buy_price > 0 and ma20 > 0 and secondary_buy_price < ma20 and not is_strict_bull:
+            fixes_applied.append(
+                f"次优买入点({secondary_buy_price:.2f}) < MA20({ma20:.2f})，非多头时不应在MA20下方设买入点"
+            )
+            risk_alerts = result.dashboard.get('intelligence', {}).get('risk_alerts', [])
+            risk_alerts.append(
+                f"⚠️ 系统检测：次优买入点({secondary_buy_price}元)低于MA20风控线({ma20:.2f}元)，"
+                f"破位后支撑变压力，不宜作为买入参考"
+            )
+
+        # === 检查8：量能解读一致性（规则D）===
         volume_analysis = data_perspective.get('volume_analysis', {})
         volume_meaning = str(volume_analysis.get('volume_meaning', ''))
         volume_status = str(volume_analysis.get('volume_status', ''))
